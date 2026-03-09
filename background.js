@@ -7,7 +7,7 @@ const TRANSLATE_URL = 'https://translate.googleapis.com/translate_a/single';
 const CACHE_MAX_SIZE = 2000;
 const STORAGE_CACHE_MAX = 1500; // Persistent cache eviction threshold
 const VALID_LANGS = new Set([
-  'es','fr','de','it','pt','ja','ko','zh','ar','hi','ru',
+  'en','es','fr','de','it','pt','ja','ko','zh','ar','hi','ru',
 ]);
 const BATCH_CONCURRENCY = 5;
 

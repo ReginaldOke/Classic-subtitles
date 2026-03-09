@@ -19,8 +19,12 @@
       this.translationEl = null;
       this.ttsRow = null;
       this.ttsButton = null;
+      this.chevronBtn = null;
+      this.closeBtn = null;
       this.showBackground = false;
       this.ttsEnabled = false;
+      this._expanded = false;
+      this._onClose = null; // Callback set by ClassicSubtitles
       this._ttsVoice = null;
       this._ttsVoices = [];
       this._ttsLang = 'es';
@@ -34,6 +38,16 @@
     _create() {
       this.container = document.createElement('div');
       this.container.id = 'ss-overlay';
+
+      // Close button (top-right, hidden until click-locked)
+      this.closeBtn = document.createElement('button');
+      this.closeBtn.id = 'ss-close-btn';
+      this.closeBtn.innerHTML = '\u2715'; // ✕
+      this.closeBtn.style.display = 'none';
+      this.closeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (this._onClose) this._onClose();
+      });
 
       // Row wrapper: translation text + TTS button
       this.ttsRow = document.createElement('div');
@@ -53,10 +67,22 @@
       this.ttsRow.appendChild(this.translationEl);
       this.ttsRow.appendChild(this.ttsButton);
 
+      // Chevron button (below text, hidden until text overflows 3 lines)
+      this.chevronBtn = document.createElement('button');
+      this.chevronBtn.id = 'ss-chevron-btn';
+      this.chevronBtn.innerHTML = '\u25BC'; // ▼
+      this.chevronBtn.style.display = 'none';
+      this.chevronBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this._toggleExpand();
+      });
+
       this.originalEl = document.createElement('div');
       this.originalEl.id = 'ss-original';
 
+      this.container.appendChild(this.closeBtn);
       this.container.appendChild(this.ttsRow);
+      this.container.appendChild(this.chevronBtn);
       this.container.appendChild(this.originalEl);
       document.body.appendChild(this.container);
     }
@@ -311,10 +337,27 @@
 
     show(translation, original = '') {
       if (!this.container) return;
+
+      // Reset expand state
+      this._expanded = false;
+      this.translationEl.classList.remove('ss-expanded');
+      if (this.chevronBtn) {
+        this.chevronBtn.innerHTML = '\u25BC';
+        this.chevronBtn.style.display = 'none';
+      }
+
       this.translationEl.textContent = translation;
       this.originalEl.textContent = original;
       this.originalEl.style.display = original ? 'block' : 'none';
       this.container.classList.add('ss-visible');
+
+      // Check for text overflow after render (show chevron if > 3 lines)
+      requestAnimationFrame(() => {
+        if (this.translationEl && this.chevronBtn) {
+          const overflows = this.translationEl.scrollHeight > this.translationEl.clientHeight + 2;
+          this.chevronBtn.style.display = overflows ? 'block' : 'none';
+        }
+      });
 
       // Auto-speak when TTS is unmuted
       if (this.ttsEnabled && translation) {
@@ -324,6 +367,24 @@
 
     hide() {
       this.container?.classList.remove('ss-visible');
+    }
+
+    // ---- Expand / collapse long text ----
+    _toggleExpand() {
+      this._expanded = !this._expanded;
+      this.translationEl.classList.toggle('ss-expanded', this._expanded);
+      if (this.chevronBtn) {
+        this.chevronBtn.innerHTML = this._expanded ? '\u25B2' : '\u25BC'; // ▲ or ▼
+      }
+    }
+
+    // ---- Close button (click-lock dismiss) ----
+    showCloseBtn() {
+      if (this.closeBtn) this.closeBtn.style.display = 'block';
+    }
+
+    hideCloseBtn() {
+      if (this.closeBtn) this.closeBtn.style.display = 'none';
     }
 
     updateSettings(s) {
@@ -1790,6 +1851,7 @@
       if (!this.settings.enabled) return;
 
       this.overlay = new SubtitleOverlay();
+      this.overlay._onClose = () => this._onCloseOverlay();
       this.translator = new TranslationService();
       this.extractor = new TextExtractor();
       this.overlay.updateSettings(this.settings);
@@ -1849,6 +1911,10 @@
       this._stopPage();
       this.overlay?._stopSpeech();
       this.overlay?.hide();
+      this.overlay?.hideCloseBtn();
+      this._clickLocked = false;
+      this._hoverLocked = false;
+      this._clearHighlight();
 
       setTimeout(() => {
         this.overlay?._syncBg();
@@ -1909,6 +1975,8 @@
         this._clickLocked = false;
         this._hoverLocked = false;
         clearTimeout(this._hoverTimer);
+        this.overlay?.hideCloseBtn();
+        this._clearHighlight();
         this.lastText = '';
         setTimeout(() => this._showBest(), 100);
         setTimeout(() => this._showBest(), 500);
@@ -2096,9 +2164,11 @@
     }
 
     _onScroll() {
-      // Scrolling releases click and hover locks — auto-extraction resumes
-      this._clickLocked = false;
+      // Scrolling releases hover lock only — click-lock persists through scroll
       this._hoverLocked = false;
+
+      // If click-locked, don't auto-extract — keep locked text visible
+      if (this._clickLocked) return;
 
       // Leading edge: fire immediately on first scroll tick
       if (!this._scrolling) {
@@ -2225,6 +2295,17 @@
       return { targetEl, cleaned };
     }
 
+    // ---- Close overlay (dismiss click-lock) ----
+    _onCloseOverlay() {
+      this._clickLocked = false;
+      this._hoverLocked = false;
+      clearTimeout(this._hoverTimer);
+      this._clearHighlight();
+      this.overlay.hideCloseBtn();
+      this.lastText = '';
+      this._showBest(); // Resume auto-extraction
+    }
+
     // ---- Click to translate (highest priority — overrides hover and auto) ----
     _onClick(e) {
       if (this._isYTWatch()) return;
@@ -2237,15 +2318,17 @@
       let el = e.target;
       let depth = 0;
       while (el && el !== document.body && depth < 10) {
-        // Skip our own overlay
+        // Skip our own overlay elements
         if (el.id === 'ss-overlay' || el.id === 'ss-translation' || el.id === 'ss-original' ||
-            el.id === 'ss-tts-btn' || el.id === 'ss-tts-row') return;
+            el.id === 'ss-tts-btn' || el.id === 'ss-tts-row' ||
+            el.id === 'ss-chevron-btn' || el.id === 'ss-close-btn') return;
 
         const result = this._smartExtract(el, e.clientX, e.clientY);
         if (result) {
           if (result.cleaned === this.lastText) return;
           this.lastText = result.cleaned;
           this._clickLocked = true;
+          this.overlay.showCloseBtn();
           this._highlightElement(result.targetEl);
           this._translateText(result.cleaned);
           return;
@@ -2256,13 +2339,19 @@
 
       // Clicked on non-text area — unlock so auto-extraction resumes
       this._clickLocked = false;
+      this.overlay.hideCloseBtn();
+      this._clearHighlight();
       this.lastText = '';
       this._showBest();
     }
 
-    // ---- Hover to translate — works on any page, overrides click lock ----
+    // ---- Hover to translate — works on any page, shows preview ----
+    // Hover does NOT override click-lock: if text is locked, hover is ignored
     _onHover(e) {
       if (this._isYTWatch()) return;
+
+      // If text is click-locked, ignore hover — user must dismiss lock first
+      if (this._clickLocked) return;
 
       // Immediately block _showBest() so in-flight auto-translations don't
       // overwrite the hover result (the debounced callback sets it more permanently)
@@ -2271,19 +2360,21 @@
       // Debounce rapid mouseover events
       clearTimeout(this._hoverTimer);
       this._hoverTimer = setTimeout(() => {
+        if (this._clickLocked) return; // Re-check after debounce
+
         // Walk up from hover target to find meaningful text
         let el = e.target;
         let depth = 0;
         while (el && el !== document.body && depth < 8) {
-          // Skip our own overlay
+          // Skip our own overlay elements
           if (el.id === 'ss-overlay' || el.id === 'ss-translation' || el.id === 'ss-original' ||
-              el.id === 'ss-tts-btn' || el.id === 'ss-tts-row') return;
+              el.id === 'ss-tts-btn' || el.id === 'ss-tts-row' ||
+              el.id === 'ss-chevron-btn' || el.id === 'ss-close-btn') return;
 
           const result = this._smartExtract(el, e.clientX, e.clientY);
           if (result) {
             if (result.cleaned === this.lastText) return;
             this.lastText = result.cleaned;
-            this._clickLocked = false;
             this._hoverLocked = true;
             this._highlightElement(result.targetEl);
             this._translateText(result.cleaned);
@@ -2299,12 +2390,12 @@
         depth = 0;
         while (el && el !== document.body && depth < 4) {
           if (el.id === 'ss-overlay' || el.id === 'ss-translation' || el.id === 'ss-original' ||
-              el.id === 'ss-tts-btn' || el.id === 'ss-tts-row') return;
+              el.id === 'ss-tts-btn' || el.id === 'ss-tts-row' ||
+              el.id === 'ss-chevron-btn' || el.id === 'ss-close-btn') return;
           const result = this._smartExtract(el, e.clientX, e.clientY, true);
           if (result) {
             if (result.cleaned === this.lastText) return;
             this.lastText = result.cleaned;
-            this._clickLocked = false;
             this._hoverLocked = true;
             this._highlightElement(result.targetEl);
             this._translateText(result.cleaned);
@@ -2434,6 +2525,8 @@
         if (!this.settings.enabled) {
           this.overlay?._stopSpeech();
           this.overlay?.hide();
+          this.overlay?.hideCloseBtn();
+          this._clickLocked = false;
           this._clearHighlight();
           this._stopYouTube();
           this._stopPage();

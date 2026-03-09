@@ -57,6 +57,7 @@
 }
 
 /* Translation text (Spanish) — main yellow subtitle */
+/* Truncated at 3 lines by default; expand via .ss-expanded */
 #ss-translation {
   font-family: 'Helvetica Neue', Helvetica, 'Inter', Arial, sans-serif;
   font-style: italic;
@@ -69,6 +70,14 @@
   paint-order: stroke fill;
   flex: 1 1 auto;
   min-width: 0;
+  /* 3-line truncation */
+  max-height: calc(3 * 29px); /* 3 × line-height */
+  overflow: hidden;
+}
+
+#ss-translation.ss-expanded {
+  max-height: none;
+  overflow: visible;
 }
 
 /* TTS mute/unmute button */
@@ -104,6 +113,70 @@
   display: block;
 }
 
+/* Expand/collapse chevron — below translation text */
+#ss-chevron-btn {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 18px;
+  padding: 0 !important;
+  margin: 2px auto 0;
+  background: none !important;
+  border: none !important;
+  cursor: pointer;
+  pointer-events: auto;
+  color: #F1D871;
+  opacity: 0.6;
+  font-size: 10px;
+  line-height: 18px;
+  text-align: center;
+  transition: opacity 0.2s ease, transform 0.15s ease;
+  font-style: normal !important;
+  -webkit-text-stroke: 0 !important;
+  filter: drop-shadow(0px 0px 1px #000) drop-shadow(0px 0px 1px #000);
+}
+
+#ss-chevron-btn:hover {
+  opacity: 1;
+  transform: scale(1.2);
+}
+
+#ss-chevron-btn:active {
+  transform: scale(0.95);
+}
+
+/* Close button — top-right of overlay, visible when text is click-locked */
+#ss-close-btn {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  width: 24px;
+  height: 24px;
+  padding: 0 !important;
+  background: none !important;
+  border: none !important;
+  cursor: pointer;
+  pointer-events: auto;
+  color: #F1D871;
+  opacity: 0.5;
+  font-size: 14px;
+  line-height: 24px;
+  text-align: center;
+  transition: opacity 0.2s ease, transform 0.15s ease;
+  font-style: normal !important;
+  -webkit-text-stroke: 0 !important;
+  filter: drop-shadow(0px 0px 1px #000) drop-shadow(0px 0px 1px #000);
+  z-index: 1;
+}
+
+#ss-close-btn:hover {
+  opacity: 1;
+  transform: scale(1.15);
+}
+
+#ss-close-btn:active {
+  transform: scale(0.95);
+}
+
 /* ---- Fullscreen support ---- */
 :fullscreen #ss-overlay,
 :-webkit-full-screen #ss-overlay {
@@ -126,6 +199,13 @@
   text-shadow: 0 0 3px rgba(0,0,0,0.8), 0 0 6px rgba(0,0,0,0.5);
 }
 
+:fullscreen #ss-close-btn,
+:-webkit-full-screen #ss-close-btn,
+:fullscreen #ss-chevron-btn,
+:-webkit-full-screen #ss-chevron-btn {
+  filter: drop-shadow(0px 0px 2px #000) drop-shadow(0px 0px 2px #000);
+}
+
 /* ---- Responsive ---- */
 @media (max-width: 768px) {
   #ss-overlay {
@@ -146,6 +226,24 @@
     width: 22px;
     height: 22px;
   }
+
+  #ss-translation {
+    max-height: calc(3 * 22px);
+  }
+
+  #ss-chevron-btn {
+    width: 20px;
+    height: 16px;
+    font-size: 9px;
+  }
+
+  #ss-close-btn {
+    width: 22px;
+    height: 22px;
+    font-size: 12px;
+    top: 6px;
+    right: 8px;
+  }
 }
 
 @media (max-width: 480px) {
@@ -163,6 +261,24 @@
     width: 20px;
     height: 20px;
   }
+
+  #ss-translation {
+    max-height: calc(3 * 19px);
+  }
+
+  #ss-chevron-btn {
+    width: 18px;
+    height: 14px;
+    font-size: 8px;
+  }
+
+  #ss-close-btn {
+    width: 20px;
+    height: 20px;
+    font-size: 11px;
+    top: 4px;
+    right: 6px;
+  }
 }
 
 /* ---- Clean reset to prevent inheritance from host page ---- */
@@ -170,7 +286,9 @@
 #ss-tts-row,
 #ss-translation,
 #ss-original,
-#ss-tts-btn {
+#ss-tts-btn,
+#ss-chevron-btn,
+#ss-close-btn {
   box-sizing: border-box;
   margin: 0;
   border: none;
@@ -188,7 +306,9 @@
 #ss-tts-row,
 #ss-translation,
 #ss-original,
-#ss-tts-btn {
+#ss-tts-btn,
+#ss-chevron-btn,
+#ss-close-btn {
   padding: 0;
 }
 
