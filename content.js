@@ -636,8 +636,9 @@
             role === 'button' || role === 'menu' || role === 'menuitem' ||
             role === 'menubar' || role === 'toolbar' || role === 'tablist') return true;
 
-        // Skip <button> elements and their children (never translate buttons/actions)
-        if (tag === 'button') return true;
+        // Skip <button>, <script>, <style>, <noscript>, <template>, <svg> elements
+        if (tag === 'button' || tag === 'script' || tag === 'style' ||
+            tag === 'noscript' || tag === 'template' || tag === 'svg') return true;
 
         // Skip timestamps
         if (tagName === 'time') return true;
@@ -1581,6 +1582,36 @@
 
     // ---- Smart text extraction helpers ----
 
+    // Get visible text from element, excluding script/style/template content
+    _getVisibleText(el) {
+      // Fast path: no script/style children → textContent is safe
+      if (!el.querySelector?.('script, style, noscript, template')) {
+        return el.textContent?.trim();
+      }
+      // Collect text excluding script/style content
+      let text = '';
+      const walk = (node) => {
+        if (node.nodeType === 3) { text += node.textContent; return; }
+        const tag = node.tagName?.toLowerCase();
+        if (tag === 'script' || tag === 'style' || tag === 'noscript' || tag === 'template') return;
+        for (const child of node.childNodes) walk(child);
+      };
+      walk(el);
+      return text.trim();
+    }
+
+    // Detect text that looks like JavaScript/CSS code (not natural language)
+    _looksLikeCode(text) {
+      if (!text || text.length < 20) return false;
+      const codeSignals = (text.match(/===|!==|=>|\|\||;\s*\w|\.querySelector|\.addEventListener|\.className|null;|undefined;|function\s*\(|const\s+\w+=|let\s+\w+=|var\s+\w+=|\}\s*\)|\btypeof\b|\bwindow\./g) || []).length;
+      return codeSignals >= 2;
+    }
+
+    // Detect concatenated UI text (action buttons + content mashed together)
+    _hasConcatenatedActions(text) {
+      return /(?:Like|Comment|Share|Save|Send|Reply|Repost|Follow)\d*(?:Like|Comment|Share|Save|Send|Reply|Repost|Follow|[A-Z])/i.test(text);
+    }
+
     // Clean extracted text: strip bare URLs, excess whitespace
     _cleanExtractedText(text) {
       if (!text) return text;
@@ -1601,9 +1632,10 @@
       for (const child of children) {
         // Prefer the title attribute if present (e.g. YouTube #video-title)
         const titleAttr = child.getAttribute('title');
-        const cText = (titleAttr && titleAttr.length >= 5) ? titleAttr.trim() : child.textContent?.trim();
+        const cText = (titleAttr && titleAttr.length >= 5) ? titleAttr.trim() : this._getVisibleText(child);
         if (!cText || cText.length < 5 || cText.length > 500) continue;
         if (!/[a-zA-Z]{2,}/.test(cText)) continue;
+        if (this._looksLikeCode(cText)) continue;
         if (this.extractor._isExcluded(child)) continue;
         if (this.extractor._isMostlyUsernames(cText)) continue;
 
@@ -1631,7 +1663,7 @@
 
     // Extract 1-2 sentences near cursor from long text block
     _extractNearbySentences(el, x, y) {
-      const fullText = this._cleanExtractedText(el.textContent?.trim());
+      const fullText = this._cleanExtractedText(this._getVisibleText(el));
       if (!fullText || fullText.length < 10) return null;
       if (fullText.length <= 300) return fullText;
 
@@ -1705,8 +1737,8 @@
                    rc.querySelector(':scope > [slot="comment"]') ||
                    rc.querySelector(':scope > .md');
         if (ce) {
-          const t = ce.textContent?.trim();
-          if (t && t.length >= 5 && /[a-zA-Z]{2,}/.test(t)) {
+          const t = this._getVisibleText(ce);
+          if (t && t.length >= 5 && /[a-zA-Z]{2,}/.test(t) && !this._looksLikeCode(t)) {
             let cleaned = this._cleanExtractedText(t);
             if (cleaned && cleaned.length >= 5) {
               if (cleaned.length > 300) {
@@ -1724,25 +1756,28 @@
         return { targetEl: el, cleaned: this._cleanExtractedText(titleAttr) };
       }
 
-      const rawText = el.textContent?.trim();
+      const rawText = this._getVisibleText(el);
       if (!rawText || rawText.length < 5 || !/[a-zA-Z]{2,}/.test(rawText)) return null;
+      // Reject code/metadata (script content from web components)
+      if (this._looksLikeCode(rawText)) return null;
       if (!lenient) {
         if (this.extractor._isExcluded(el) || this.extractor._isMostlyUsernames(rawText)) return null;
       } else {
         // Even in lenient mode, skip obvious UI elements
         const tag = el.tagName?.toLowerCase();
-        if (tag === 'button' || tag === 'nav' || tag === 'aside' || tag === 'footer') return null;
+        if (tag === 'button' || tag === 'nav' || tag === 'aside' || tag === 'footer' ||
+            tag === 'script' || tag === 'style' || tag === 'noscript') return null;
         if (el.id === 'ss-overlay') return null;
       }
 
       let targetEl = el;
       let cleaned;
 
-      if (rawText.length <= 300) {
-        // Short text — use as-is after cleaning
+      if (rawText.length <= 300 && !this._hasConcatenatedActions(rawText)) {
+        // Short text without concatenated UI — use as-is after cleaning
         cleaned = this._cleanExtractedText(rawText);
       } else {
-        // Long text — try to find a specific child element near cursor
+        // Long text or concatenated action text — drill down to find specific child
         const child = this._findBestChildNearPoint(el, x, y);
         if (child) {
           targetEl = child.el;
@@ -1753,7 +1788,7 @@
         }
       }
 
-      if (!cleaned || cleaned.length < 5) return null;
+      if (!cleaned || cleaned.length < 5 || this._looksLikeCode(cleaned)) return null;
       cleaned = cleaned.substring(0, 300);
       return { targetEl, cleaned };
     }
