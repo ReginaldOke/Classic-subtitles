@@ -358,12 +358,8 @@
       this.container.classList.add('ss-visible');
 
       // Check for text overflow after render (show chevron if > 3 lines)
-      requestAnimationFrame(() => {
-        if (this.translationEl && this.chevronBtn) {
-          const overflows = this.translationEl.scrollHeight > this.translationEl.clientHeight + 2;
-          this.chevronBtn.style.display = overflows ? 'block' : 'none';
-        }
-      });
+      // Double-rAF ensures layout is fully computed even on slow pages
+      this._checkOverflow();
 
       // Auto-speak when TTS is unmuted
       if (this.ttsEnabled && translation) {
@@ -382,6 +378,20 @@
       if (this.chevronBtn) {
         this.chevronBtn.textContent = this._expanded ? '\u25B2' : '\u2026 \u25BC'; // ▲ or … ▼
       }
+    }
+
+    // Robust overflow detection: double-rAF + setTimeout fallback
+    _checkOverflow() {
+      const doCheck = () => {
+        if (!this.translationEl || !this.chevronBtn) return;
+        const el = this.translationEl;
+        const overflows = el.scrollHeight > el.clientHeight + 2;
+        this.chevronBtn.style.display = overflows ? 'block' : 'none';
+      };
+      // Double rAF to ensure layout is fully computed
+      requestAnimationFrame(() => requestAnimationFrame(doCheck));
+      // Fallback: also check after a short delay (covers slow layout engines)
+      setTimeout(doCheck, 120);
     }
 
     // ---- Close button (click-lock dismiss) — positioned inside top-right of highlight box ----
