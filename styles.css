@@ -72,9 +72,10 @@
   font-size: 24px;
   line-height: 29px;
   text-align: center;
-  color: #F1D871;
+  color: #F3F378;
   -webkit-text-stroke: 1px #000000;
   paint-order: stroke fill;
+  text-shadow: 0 0 2px rgba(0,0,0,0.9), 0 0 4px rgba(0,0,0,0.5);
   flex: 1 1 auto;
   min-width: 0;
   position: relative;
@@ -99,7 +100,7 @@
   border: none !important;
   cursor: pointer;
   pointer-events: auto;
-  color: #F1D871;
+  color: #F3F378;
   opacity: 0.7;
   transition: opacity 0.2s ease, transform 0.15s ease;
   font-style: normal !important;
@@ -132,7 +133,7 @@
   border: none !important;
   cursor: pointer;
   pointer-events: auto;
-  color: #F1D871;
+  color: #F3F378;
   opacity: 0.85;
   font-size: 14px;
   line-height: 29px; /* Match translation line-height */
@@ -168,7 +169,7 @@
   border-radius: 50%;
   cursor: pointer;
   pointer-events: auto;
-  color: #F1D871;
+  color: #F3F378;
   font-size: 11px;
   line-height: 18px;
   text-align: center;
@@ -324,7 +325,7 @@
 
 /* ---- Highlight mode: outline around source text being translated ---- */
 .ss-highlighted {
-  outline: 1px solid #F1D871 !important;
+  outline: 1px solid #F3F378 !important;
   outline-offset: 2px;
   border-radius: 2px;
 }

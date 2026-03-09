@@ -1,6 +1,6 @@
 /* ============================================
    CLASSIC SUBTITLES - Popup Styles
-   Dark, minimal, Helvetica italic, #F1D871 gold
+   Dark, minimal, Helvetica italic, #F3F378 gold
    ============================================ */
 
 * {
@@ -19,7 +19,7 @@ body {
   font-style: italic;
   font-weight: 400;
   font-size: 13px;
-  color: #F1D871;
+  color: #F3F378;
   background: #0F0F0F;
   border-radius: 16px;
   overflow: hidden;
@@ -55,14 +55,14 @@ h1 {
   font-size: 15px;
   font-weight: 500;
   font-style: italic;
-  color: #F1D871;
+  color: #F3F378;
   letter-spacing: -0.2px;
 }
 
 /* ---- Divider ---- */
 .divider {
   height: 1px;
-  background: rgba(241, 216, 113, 0.1);
+  background: rgba(243, 243, 120, 0.1);
   margin-bottom: 16px;
 }
 
@@ -81,15 +81,15 @@ h1 {
 .setting-row label {
   font-size: 13px;
   font-style: italic;
-  color: rgba(241, 216, 113, 0.82);
+  color: rgba(243, 243, 120, 0.82);
   flex-shrink: 0;
 }
 
 /* ---- Select ---- */
 .setting-row select {
-  background: rgba(241, 216, 113, 0.06);
-  color: #F1D871;
-  border: 1px solid rgba(241, 216, 113, 0.12);
+  background: rgba(243, 243, 120, 0.06);
+  color: #F3F378;
+  border: 1px solid rgba(243, 243, 120, 0.12);
   border-radius: 8px;
   padding: 6px 10px;
   font-family: inherit;
@@ -101,16 +101,16 @@ h1 {
 }
 
 .setting-row select:hover {
-  border-color: rgba(241, 216, 113, 0.3);
+  border-color: rgba(243, 243, 120, 0.3);
 }
 
 .setting-row select:focus {
-  border-color: rgba(241, 216, 113, 0.5);
+  border-color: rgba(243, 243, 120, 0.5);
 }
 
 .setting-row select option {
   background: #1a1a1a;
-  color: #F1D871;
+  color: #F3F378;
 }
 
 /* ---- Range Slider ---- */
@@ -122,7 +122,7 @@ h1 {
 
 .range-value {
   font-size: 12px;
-  color: #F1D871;
+  color: #F3F378;
   min-width: 36px;
   text-align: right;
   font-weight: 500;
@@ -134,7 +134,7 @@ input[type="range"] {
   appearance: none;
   width: 100px;
   height: 3px;
-  background: rgba(241, 216, 113, 0.12);
+  background: rgba(243, 243, 120, 0.12);
   border-radius: 2px;
   outline: none;
   cursor: pointer;
@@ -145,17 +145,17 @@ input[type="range"]::-webkit-slider-thumb {
   appearance: none;
   width: 14px;
   height: 14px;
-  background: #F1D871;
+  background: #F3F378;
   border-radius: 50%;
   cursor: pointer;
   border: none;
-  box-shadow: 0 0 6px rgba(241, 216, 113, 0.25);
+  box-shadow: 0 0 6px rgba(243, 243, 120, 0.25);
 }
 
 input[type="range"]::-moz-range-thumb {
   width: 14px;
   height: 14px;
-  background: #F1D871;
+  background: #F3F378;
   border-radius: 50%;
   cursor: pointer;
   border: none;
@@ -208,13 +208,13 @@ input[type="range"]::-moz-range-thumb {
 }
 
 input:checked + .slider {
-  background: rgba(241, 216, 113, 0.15);
+  background: rgba(243, 243, 120, 0.15);
 }
 
 input:checked + .slider::before {
-  background: #F1D871;
+  background: #F3F378;
   transform: translateX(20px);
-  box-shadow: 0 0 8px rgba(241, 216, 113, 0.35);
+  box-shadow: 0 0 8px rgba(243, 243, 120, 0.35);
 }
 
 .toggle-switch.small input:checked + .slider::before {
@@ -225,10 +225,10 @@ input:checked + .slider::before {
 .status {
   margin-top: 16px;
   padding-top: 12px;
-  border-top: 1px solid rgba(241, 216, 113, 0.06);
+  border-top: 1px solid rgba(243, 243, 120, 0.06);
   font-size: 11px;
   font-style: italic;
-  color: rgba(241, 216, 113, 0.5);
+  color: rgba(243, 243, 120, 0.5);
   text-align: center;
 }
 
@@ -238,10 +238,10 @@ input:checked + .slider::before {
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: #F1D871;
+  background: #F3F378;
   margin-right: 6px;
   vertical-align: middle;
-  box-shadow: 0 0 4px rgba(241, 216, 113, 0.5);
+  box-shadow: 0 0 4px rgba(243, 243, 120, 0.5);
 }
 
 .status.paused::before {

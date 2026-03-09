@@ -2539,7 +2539,7 @@
         this._prevOutline = el.style.outline;
         this._prevOutlineOffset = el.style.outlineOffset;
         this._prevBorderRadius = el.style.borderRadius;
-        el.style.outline = '1px solid #F1D871';
+        el.style.outline = '1px solid #F3F378';
         el.style.outlineOffset = '2px';
         el.style.borderRadius = '2px';
         this._highlightedEl = el;

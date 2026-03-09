@@ -314,7 +314,7 @@ async function updateIcon(enabled) {
 
       ctx.beginPath();
       ctx.arc(cx, cy, dotR, 0, Math.PI * 2);
-      ctx.fillStyle = enabled ? '#F1D871' : '#7D7D7D';
+      ctx.fillStyle = enabled ? '#F3F378' : '#7D7D7D';
       ctx.fill();
       ctx.strokeStyle = '#000000';
       ctx.lineWidth = 0.8 * s;
