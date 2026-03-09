@@ -39,22 +39,23 @@
       this.container = document.createElement('div');
       this.container.id = 'ss-overlay';
 
-      // Close button (top-right, hidden until click-locked)
-      this.closeBtn = document.createElement('button');
-      this.closeBtn.id = 'ss-close-btn';
-      this.closeBtn.innerHTML = '\u2715'; // ✕
-      this.closeBtn.style.display = 'none';
-      this.closeBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (this._onClose) this._onClose();
-      });
-
       // Row wrapper: translation text + TTS button
       this.ttsRow = document.createElement('div');
       this.ttsRow.id = 'ss-tts-row';
 
       this.translationEl = document.createElement('div');
       this.translationEl.id = 'ss-translation';
+
+      // Chevron ("… ▼") inside translation — bottom-right, shown when text overflows
+      this.chevronBtn = document.createElement('button');
+      this.chevronBtn.id = 'ss-chevron-btn';
+      this.chevronBtn.textContent = '\u2026 \u25BC'; // … ▼
+      this.chevronBtn.style.display = 'none';
+      this.chevronBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this._toggleExpand();
+      });
+      this.translationEl.appendChild(this.chevronBtn);
 
       this.ttsButton = document.createElement('button');
       this.ttsButton.id = 'ss-tts-btn';
@@ -67,24 +68,23 @@
       this.ttsRow.appendChild(this.translationEl);
       this.ttsRow.appendChild(this.ttsButton);
 
-      // Chevron button (below text, hidden until text overflows 3 lines)
-      this.chevronBtn = document.createElement('button');
-      this.chevronBtn.id = 'ss-chevron-btn';
-      this.chevronBtn.innerHTML = '\u25BC'; // ▼
-      this.chevronBtn.style.display = 'none';
-      this.chevronBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this._toggleExpand();
-      });
-
       this.originalEl = document.createElement('div');
       this.originalEl.id = 'ss-original';
 
-      this.container.appendChild(this.closeBtn);
       this.container.appendChild(this.ttsRow);
-      this.container.appendChild(this.chevronBtn);
       this.container.appendChild(this.originalEl);
       document.body.appendChild(this.container);
+
+      // Close button — floating on the page near highlighted text, not in overlay
+      this.closeBtn = document.createElement('button');
+      this.closeBtn.id = 'ss-close-btn';
+      this.closeBtn.innerHTML = '\u2715'; // ✕
+      this.closeBtn.style.display = 'none';
+      this.closeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (this._onClose) this._onClose();
+      });
+      document.body.appendChild(this.closeBtn);
     }
 
     // ---- TTS: inline SVG icons ----
@@ -342,11 +342,17 @@
       this._expanded = false;
       this.translationEl.classList.remove('ss-expanded');
       if (this.chevronBtn) {
-        this.chevronBtn.innerHTML = '\u25BC';
+        this.chevronBtn.textContent = '\u2026 \u25BC'; // … ▼
         this.chevronBtn.style.display = 'none';
       }
 
-      this.translationEl.textContent = translation;
+      // Set text while preserving the chevron button child
+      // Remove all children except the chevron, then prepend text node
+      while (this.translationEl.firstChild !== this.chevronBtn && this.translationEl.firstChild) {
+        this.translationEl.removeChild(this.translationEl.firstChild);
+      }
+      this.translationEl.insertBefore(document.createTextNode(translation), this.chevronBtn);
+
       this.originalEl.textContent = original;
       this.originalEl.style.display = original ? 'block' : 'none';
       this.container.classList.add('ss-visible');
@@ -374,13 +380,32 @@
       this._expanded = !this._expanded;
       this.translationEl.classList.toggle('ss-expanded', this._expanded);
       if (this.chevronBtn) {
-        this.chevronBtn.innerHTML = this._expanded ? '\u25B2' : '\u25BC'; // ▲ or ▼
+        this.chevronBtn.textContent = this._expanded ? '\u25B2' : '\u2026 \u25BC'; // ▲ or … ▼
       }
     }
 
-    // ---- Close button (click-lock dismiss) ----
-    showCloseBtn() {
-      if (this.closeBtn) this.closeBtn.style.display = 'block';
+    // ---- Close button (click-lock dismiss) — positioned inside top-right of highlight box ----
+    showCloseBtn(highlightedEl) {
+      if (!this.closeBtn) return;
+      if (highlightedEl) {
+        const rect = highlightedEl.getBoundingClientRect();
+        // outlineOffset is 2px, so the visible box extends 3px (1px outline + 2px offset) beyond rect
+        // Position the button so its center sits on the top-right corner of the outline
+        const btnSize = 18; // matches CSS width/height
+        const half = btnSize / 2;
+        const outlineGap = 3; // 1px outline + 2px offset
+        this.closeBtn.style.top = (rect.top - outlineGap - half) + 'px';
+        this.closeBtn.style.left = (rect.right + outlineGap - half) + 'px';
+        this.closeBtn.style.right = '';
+        // Adaptive background: dark bg → semi-transparent black, light bg → semi-transparent white
+        const bg = this._detectBg();
+        const m = bg.match(/rgba?\(\s*(\d+),\s*(\d+),\s*(\d+)/);
+        const lum = m ? (parseInt(m[1], 10) * 299 + parseInt(m[2], 10) * 587 + parseInt(m[3], 10) * 114) / 1000 : 0;
+        this.closeBtn.style.background = lum > 128
+          ? 'rgba(255, 255, 255, 0.75)'   // light site → white bg
+          : 'rgba(0, 0, 0, 0.75)';        // dark site → black bg
+      }
+      this.closeBtn.style.display = 'block';
     }
 
     hideCloseBtn() {
@@ -412,6 +437,8 @@
       }
       this.container?.remove();
       this.container = null;
+      this.closeBtn?.remove();
+      this.closeBtn = null;
     }
   }
 
@@ -2328,8 +2355,8 @@
           if (result.cleaned === this.lastText) return;
           this.lastText = result.cleaned;
           this._clickLocked = true;
-          this.overlay.showCloseBtn();
           this._highlightElement(result.targetEl);
+          this.overlay.showCloseBtn(result.targetEl);
           this._translateText(result.cleaned);
           return;
         }
