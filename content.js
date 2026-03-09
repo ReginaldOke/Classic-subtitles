@@ -885,8 +885,9 @@
       this.lastCapText = '';
       this._messageHandler = null;
       this._fullscreenHandler = null;
-      this._captionSource = null; // 'intercepted'|'tracks'|'dom'
+      this._captionSource = null; // 'intercepted'|'tracks'|'dom'|'directASR'
       this._pendingTracks = null;
+      this._directASRAttempted = false;
 
       // Pause-mode state: when paused, show title + comments instead of captions
       this._paused = false;
@@ -903,6 +904,7 @@
 
     async init() {
       this.active = true;
+      this._lastCaptionShownAt = Date.now(); // Watchdog timestamp
 
       // Listen for messages from MAIN world
       this._startInterceptListener();
@@ -921,6 +923,17 @@
 
       // Start DOM caption observation as silent fallback
       this._observeDOMCaptions();
+
+      // Failsafe: periodic DOM poll + watchdog (independent of other tiers)
+      this._startDOMPoll();
+      this._startWatchdog();
+
+      // Last resort: try direct ASR (auto-generated) caption fetch after 10s
+      setTimeout(() => {
+        if (this.active && !this.captionTrack) {
+          this._tryDirectASR();
+        }
+      }, 10000);
 
       // Listen for pause/play to toggle between captions and page-browse mode
       this._initPausePlayListeners();
@@ -981,6 +994,7 @@
           this.captionTrack = null;
           this._captionSource = null;
           this._pendingTracks = null;
+          this._directASRAttempted = false;
           this.lastCapText = '';
 
           // Re-request captions aggressively
@@ -1161,6 +1175,7 @@
         const idx = this._findCaption(t, lastIdx);
         if (idx !== -1 && idx !== lastIdx) {
           lastIdx = idx;
+          this._lastCaptionShownAt = Date.now(); // Stamp watchdog
           const text = this.captionTrack[idx].text;
           if (needsTranslation) {
             const tr = await this.translator.translate(text, this.settings.targetLang || 'es');
@@ -1202,8 +1217,9 @@
     _observeDOMCaptions() {
       if (this.captionObserver) return;
       this.captionObserver = new MutationObserver(() => {
-        // Don't override intercepted captions with DOM captions
-        if (this._captionSource === 'intercepted') return;
+        // Don't override intercepted captions with DOM captions — unless they've gone stale
+        if (this._captionSource === 'intercepted' &&
+            (Date.now() - (this._lastCaptionShownAt || 0)) < 8000) return;
         if (this._paused) return; // Pause mode handles overlay
 
         // Scope query to caption container for efficiency
@@ -1244,7 +1260,135 @@
 
     async _translateAndShow(text) {
       const tr = await this.translator.translate(text, this.settings.targetLang || 'es');
-      if (tr && this.active) this.overlay.show(tr, this.settings.showOriginal ? text : '');
+      if (tr && this.active) {
+        this._lastCaptionShownAt = Date.now();
+        this.overlay.show(tr, this.settings.showOriginal ? text : '');
+      }
+    }
+
+    // ---- Failsafe 1: Periodic DOM poll (independent of MutationObserver) ----
+    // Catches captions even when the observer misses mutations or _captionSource blocks it.
+    _startDOMPoll() {
+      if (this._domPollInterval) clearInterval(this._domPollInterval);
+      this._domPollInterval = setInterval(() => {
+        if (!this.active || this._paused) return;
+        if (!this.video || this.video.paused) return;
+
+        // If intercepted/track captions are actively working (shown in last 5s), skip
+        if (this._captionSource && (Date.now() - (this._lastCaptionShownAt || 0)) < 5000) return;
+
+        // Check DOM for caption segments
+        const segs = document.querySelectorAll('.ytp-caption-segment');
+        if (segs.length === 0) return;
+        const text = Array.from(segs).map(s => s.textContent).join(' ').trim();
+        if (!text || text === this.lastCapText) return;
+
+        // DOM has fresh captions — use them
+        this.lastCapText = text;
+        this._captionSource = 'dom';
+        this._translateAndShow(text);
+      }, 2000);
+    }
+
+    // ---- Failsafe 2: Watchdog — detect stale caption state and recover ----
+    _startWatchdog() {
+      if (this._watchdogInterval) clearInterval(this._watchdogInterval);
+      let _ccForced = false;
+      this._watchdogInterval = setInterval(() => {
+        if (!this.active) return;
+        if (!this.video || this.video.paused || this._paused) return;
+
+        const elapsed = Date.now() - (this._lastCaptionShownAt || 0);
+
+        // If video is playing but no caption shown for 8+ seconds, try recovery
+        if (elapsed > 8000) {
+          // Reset caption source so DOM observer and poll can work freely
+          if (this._captionSource === 'intercepted' || this._captionSource === 'tracks') {
+            this._captionSource = null;
+          }
+
+          // Re-request captions from MAIN world
+          window.postMessage({ type: '__CS_REQUEST_CAPTIONS__' }, window.location.origin);
+        }
+
+        // If no captions for 15+ seconds, try forcing YouTube's CC button on
+        if (elapsed > 15000 && !_ccForced) {
+          _ccForced = true;
+          this._forceCCOn();
+        }
+
+        // If no captions for 25+ seconds and no track loaded, try direct ASR
+        if (elapsed > 25000 && !this.captionTrack && !this._directASRAttempted) {
+          this._directASRAttempted = true;
+          this._tryDirectASR();
+        }
+      }, 4000);
+    }
+
+    // ---- Failsafe 3: Force YouTube's CC button on ----
+    _forceCCOn() {
+      try {
+        const player = document.getElementById('movie_player');
+        if (!player) return;
+        // Use YouTube's player API to force captions on
+        if (typeof player.setOption === 'function') {
+          const tracklist = player.getOption?.('captions', 'tracklist');
+          if (tracklist?.length) {
+            player.setOption('captions', 'track', tracklist[0]);
+            return;
+          }
+        }
+        // Fallback: click the CC button directly
+        const ccBtn = player.querySelector('.ytp-subtitles-button');
+        if (ccBtn && ccBtn.getAttribute('aria-pressed') !== 'true') {
+          ccBtn.click();
+        }
+      } catch {}
+    }
+
+    // ---- Failsafe 4: Last-resort caption recovery ----
+    // Re-requests caption data from MAIN world (which re-extracts from ytInitialPlayerResponse
+    // and alternate player data sources). Also sets up a one-shot listener for tracks that
+    // may arrive from the re-extraction.
+    async _tryDirectASR() {
+      if (!this.active || this.captionTrack) return;
+
+      // Send aggressive re-request — MAIN world will re-check ytInitialPlayerResponse
+      // and alternate player data sources even if its cache was cleared
+      window.postMessage({ type: '__CS_REQUEST_CAPTIONS__' }, window.location.origin);
+
+      // Wait 3s, then if still no captions, try forcing CC and request again
+      await new Promise(r => setTimeout(r, 3000));
+      if (!this.active || this.captionTrack) return;
+
+      this._forceCCOn();
+      window.postMessage({ type: '__CS_REQUEST_CAPTIONS__' }, window.location.origin);
+
+      // Wait another 5s, then show title fallback if truly no captions
+      await new Promise(r => setTimeout(r, 5000));
+      if (!this.active || this.captionTrack) return;
+
+      // Last resort: show translated title
+      this._showNoCaptionsFallback();
+    }
+
+    // Show translated page title when no captions exist at all
+    async _showNoCaptionsFallback() {
+      if (!this.active) return;
+      // Get the video title
+      const titleEl = document.querySelector(
+        'h1.ytd-watch-metadata yt-formatted-string, ' +
+        'h1.ytd-video-primary-info-renderer, ' +
+        '#info-contents h1, ' +
+        'h1.slim-video-metadata-header--title'
+      );
+      const title = titleEl?.textContent?.trim() || document.title?.replace(/ - YouTube$/, '').trim();
+      if (!title) return;
+
+      const tr = await this.translator.translate(title, this.settings.targetLang || 'es');
+      if (tr && this.active) {
+        this.overlay.show(tr, this.settings.showOriginal ? title : '');
+      }
     }
 
     // ---- Pause-mode: show title + comments when paused ----
@@ -1528,9 +1672,18 @@
         this._adObserver.disconnect();
         this._adObserver = null;
       }
+      if (this._domPollInterval) {
+        clearInterval(this._domPollInterval);
+        this._domPollInterval = null;
+      }
+      if (this._watchdogInterval) {
+        clearInterval(this._watchdogInterval);
+        this._watchdogInterval = null;
+      }
       this._captionSource = null;
       this.captionTrack = null;
       this._pendingTracks = null;
+      this._directASRAttempted = false;
     }
   }
 

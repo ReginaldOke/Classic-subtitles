@@ -149,6 +149,15 @@
       }
       if (_lastCaptionTracks) {
         window.postMessage({ type: '__CS_CAPTION_TRACKS__', tracks: _lastCaptionTracks }, window.location.origin);
+      } else {
+        // Cache was cleared (e.g. by SPA nav timeout) — re-extract from ytInitialPlayerResponse
+        tryInitialPlayerResponse();
+        // Also try ytplayer.config and yt.player for alternative sources
+        _tryAlternatePlayerData();
+        // If tracks were found by re-extraction, send them now
+        if (_lastCaptionTracks) {
+          window.postMessage({ type: '__CS_CAPTION_TRACKS__', tracks: _lastCaptionTracks }, window.location.origin);
+        }
       }
       // Always try player API approach — don't skip even if previously triggered,
       // because after ads end or SPA navigation we need to re-trigger caption loading
@@ -162,6 +171,28 @@
     try {
       const data = window.ytInitialPlayerResponse;
       if (data) _onPlayerResponse(data);
+    } catch {}
+  }
+
+  // ---- Try alternate sources of player data ----
+  // YouTube stores player response in multiple locations; try all of them
+  function _tryAlternatePlayerData() {
+    try {
+      // Source 1: ytInitialPlayerResponse (already tried by tryInitialPlayerResponse)
+      // Source 2: ytplayer.config.args.raw_player_response
+      if (window.ytplayer?.config?.args?.raw_player_response) {
+        _onPlayerResponse(window.ytplayer.config.args.raw_player_response);
+        if (_lastCaptionTracks) return;
+      }
+      // Source 3: movie_player's getPlayerResponse() API (try before ytInitialData as it's more reliable)
+      const player = document.getElementById('movie_player');
+      if (player && typeof player.getPlayerResponse === 'function') {
+        const resp = player.getPlayerResponse();
+        if (resp) {
+          _onPlayerResponse(resp);
+          if (_lastCaptionTracks) return;
+        }
+      }
     } catch {}
   }
 
