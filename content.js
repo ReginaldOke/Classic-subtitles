@@ -626,8 +626,7 @@
         // Reddit-specific: skip flair, author, karma elements
         const testId = node.getAttribute?.('data-testid') || '';
         if (
-          testId.includes('flair') || testId.includes('author') ||
-          testId.includes('subreddit-name')
+          testId.includes('flair') || testId.includes('author')
         ) return true;
 
         // Generic role checks — skip buttons, menus, navigation
@@ -670,10 +669,16 @@
     // Check if text is mostly usernames/handles (should not be translated)
     _isMostlyUsernames(text) {
       if (!text) return false;
-      // Text that is primarily @mentions or handle-like patterns
-      const words = text.split(/\s+/);
-      const handleWords = words.filter(w => /^@?\w[\w.]+$/.test(w) && w.length > 2);
-      return handleWords.length > 0 && handleWords.length >= words.length * 0.5;
+      const words = text.split(/\s+/).filter(w => w.length > 0);
+      if (words.length === 0 || words.length > 20) return false;
+      // Only count actual handle patterns — @user, u/user, r/sub, #hashtag
+      const handleWords = words.filter(w =>
+        /^@\w/.test(w) ||           // @username
+        /^[ur]\/\w/.test(w) ||      // u/user or r/subreddit
+        /^\/[ur]\/\w/.test(w) ||    // /u/user or /r/subreddit
+        /^#\w/.test(w)              // #hashtag
+      );
+      return handleWords.length > 0 && handleWords.length >= words.length * 0.4;
     }
 
     _vScore(rect) {
@@ -765,6 +770,45 @@
 
       // Listen for pause/play to toggle between captions and page-browse mode
       this._initPausePlayListeners();
+
+      // Retry caption loading if nothing loaded yet (handles ads, slow loads)
+      this._startCaptionRetry();
+    }
+
+    // Retry caption requests periodically until captions are loaded
+    _startCaptionRetry() {
+      if (this._captionRetryInterval) clearInterval(this._captionRetryInterval);
+      let retries = 0;
+      this._captionRetryInterval = setInterval(() => {
+        if (!this.active || this.captionTrack || retries > 20) {
+          clearInterval(this._captionRetryInterval);
+          this._captionRetryInterval = null;
+          return;
+        }
+        retries++;
+        window.postMessage({ type: '__CS_REQUEST_CAPTIONS__' }, window.location.origin);
+      }, 3000); // Every 3s for up to 60s
+
+      // Also listen for video playing event (e.g., after ad ends)
+      if (this.video) {
+        this._playingRetryHandler = () => {
+          if (!this.active) return;
+          if (!this.captionTrack) {
+            // After ad ends and real video starts, re-request captions
+            setTimeout(() => {
+              if (this.active && !this.captionTrack) {
+                window.postMessage({ type: '__CS_REQUEST_CAPTIONS__' }, window.location.origin);
+              }
+            }, 500);
+            setTimeout(() => {
+              if (this.active && !this.captionTrack) {
+                window.postMessage({ type: '__CS_REQUEST_CAPTIONS__' }, window.location.origin);
+              }
+            }, 2000);
+          }
+        };
+        this.video.addEventListener('playing', this._playingRetryHandler);
+      }
     }
 
     // ---- Listen for messages from MAIN world ----
@@ -1255,6 +1299,14 @@
         document.removeEventListener('fullscreenchange', this._fullscreenHandler);
         this._fullscreenHandler = null;
       }
+      if (this._captionRetryInterval) {
+        clearInterval(this._captionRetryInterval);
+        this._captionRetryInterval = null;
+      }
+      if (this.video && this._playingRetryHandler) {
+        this.video.removeEventListener('playing', this._playingRetryHandler);
+        this._playingRetryHandler = null;
+      }
       this._captionSource = null;
       this.captionTrack = null;
       this._pendingTracks = null;
@@ -1644,7 +1696,28 @@
     }
 
     // ---- Shared: extract text from an element, drilling down for specificity ----
-    _smartExtract(el, x, y) {
+    _smartExtract(el, x, y, lenient = false) {
+      // Reddit: if inside a shreddit-comment, extract that specific comment's content
+      const rc = el.closest?.('shreddit-comment');
+      if (rc) {
+        // :scope > ensures we get THIS comment's content, not a nested reply's
+        const ce = rc.querySelector(':scope > [slot="comment"] .md') ||
+                   rc.querySelector(':scope > [slot="comment"]') ||
+                   rc.querySelector(':scope > .md');
+        if (ce) {
+          const t = ce.textContent?.trim();
+          if (t && t.length >= 5 && /[a-zA-Z]{2,}/.test(t)) {
+            let cleaned = this._cleanExtractedText(t);
+            if (cleaned && cleaned.length >= 5) {
+              if (cleaned.length > 300) {
+                cleaned = this._extractNearbySentences(ce, x, y) || cleaned.substring(0, 300);
+              }
+              return { targetEl: ce, cleaned: cleaned.substring(0, 300) };
+            }
+          }
+        }
+      }
+
       // Check title attribute first (YouTube #video-title uses title attr for clean text)
       const titleAttr = el.getAttribute?.('title');
       if (titleAttr && titleAttr.length >= 5 && titleAttr.length <= 300 && /[a-zA-Z]{2,}/.test(titleAttr)) {
@@ -1653,7 +1726,14 @@
 
       const rawText = el.textContent?.trim();
       if (!rawText || rawText.length < 5 || !/[a-zA-Z]{2,}/.test(rawText)) return null;
-      if (this.extractor._isExcluded(el) || this.extractor._isMostlyUsernames(rawText)) return null;
+      if (!lenient) {
+        if (this.extractor._isExcluded(el) || this.extractor._isMostlyUsernames(rawText)) return null;
+      } else {
+        // Even in lenient mode, skip obvious UI elements
+        const tag = el.tagName?.toLowerCase();
+        if (tag === 'button' || tag === 'nav' || tag === 'aside' || tag === 'footer') return null;
+        if (el.id === 'ss-overlay') return null;
+      }
 
       let targetEl = el;
       let cleaned;
@@ -1729,6 +1809,27 @@
               el.id === 'ss-tts-btn' || el.id === 'ss-tts-row') return;
 
           const result = this._smartExtract(el, e.clientX, e.clientY);
+          if (result) {
+            if (result.cleaned === this.lastText) return;
+            this.lastText = result.cleaned;
+            this._clickLocked = false;
+            this._hoverLocked = true;
+            this._highlightElement(result.targetEl);
+            this._translateText(result.cleaned);
+            return;
+          }
+          el = el.parentElement;
+          depth++;
+        }
+
+        // Fallback: retry with lenient mode (skip exclusion checks)
+        // This catches text that _isExcluded over-filters (Instagram captions, etc.)
+        el = e.target;
+        depth = 0;
+        while (el && el !== document.body && depth < 4) {
+          if (el.id === 'ss-overlay' || el.id === 'ss-translation' || el.id === 'ss-original' ||
+              el.id === 'ss-tts-btn' || el.id === 'ss-tts-row') return;
+          const result = this._smartExtract(el, e.clientX, e.clientY, true);
           if (result) {
             if (result.cleaned === this.lastText) return;
             this.lastText = result.cleaned;

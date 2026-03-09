@@ -128,7 +128,7 @@
 
   // ---- Poll until YouTube's player is ready ----
   function waitAndTrigger(attempts) {
-    if (attempts > 40) return; // Give up after ~20s
+    if (attempts > 60) return; // Give up after ~30s
     if (triggerCaptionLoad()) return; // Success
     setTimeout(() => waitAndTrigger(attempts + 1), 500);
   }
@@ -190,10 +190,17 @@
   document.addEventListener('yt-navigate-finish', () => {
     _captionsTriggered = false;
     _lastTimedtextUrl = null;
-    _lastCaptionTracks = null;
+    // Don't reset _lastCaptionTracks immediately — the player response for the
+    // new video may have already arrived. Clear after a delay only if new tracks came.
+    const oldTracks = _lastCaptionTracks;
+    setTimeout(() => {
+      // If tracks haven't been updated by a new player response, clear stale ones
+      if (_lastCaptionTracks === oldTracks) _lastCaptionTracks = null;
+    }, 5000);
     // Ensure caption-hiding CSS persists across navigation
     _hideYTCaptions();
-    // Wait for new video's player to be ready
-    setTimeout(() => waitAndTrigger(0), 1500);
+    // Wait for new video's player to be ready — try sooner and keep retrying
+    setTimeout(() => waitAndTrigger(0), 500);
+    setTimeout(() => waitAndTrigger(0), 2000);
   });
 })();
