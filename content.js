@@ -192,8 +192,10 @@
         this.container.style.background = 'none';
       } else {
         const clear = this._toTransparent(bg);
+        // Pixel-based gradient: 50px fade then solid — ensures text always has
+        // a solid background regardless of how tall the overlay grows
         this.container.style.background =
-          `linear-gradient(180deg, ${clear} 0%, ${bg} 50%)`;
+          `linear-gradient(180deg, ${clear} 0px, ${bg} 50px)`;
       }
 
       // Always adapt original text color to page background
@@ -1256,7 +1258,7 @@
           try { document.fullscreenElement.appendChild(this.overlay.container); } catch {}
           // Always use dark gradient in fullscreen (video content is always dark)
           this.overlay.container.style.background =
-            'linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0.85) 50%)';
+            'linear-gradient(180deg, rgba(0,0,0,0) 0px, rgba(0,0,0,0.85) 50px)';
           // Mark fullscreen so _syncBg() won't override our dark gradient
           this.overlay._inFullscreen = true;
           // Original text: white on black in fullscreen
@@ -1609,7 +1611,14 @@
 
     // Detect concatenated UI text (action buttons + content mashed together)
     _hasConcatenatedActions(text) {
-      return /(?:Like|Comment|Share|Save|Send|Reply|Repost|Follow)\d*(?:Like|Comment|Share|Save|Send|Reply|Repost|Follow|[A-Z])/i.test(text);
+      // Instagram/social: LikeCommentShareSave etc.
+      if (/(?:Like|Comment|Share|Save|Send|Reply|Repost|Follow)\d*(?:Like|Comment|Share|Save|Send|Reply|Repost|Follow|[A-Z])/i.test(text)) return true;
+      // YouTube: Tap to unmute2xSearchInfoShopping etc.
+      if (/(?:Search|Info|Shopping|Subscribe|Upcoming|Cancel|Play now)\w*(?:Search|Info|Shopping|Subscribe|Upcoming|Cancel|Play now|[A-Z])/i.test(text)) return true;
+      // Generic: 4+ CamelCase words jammed together (LikeCommentShareSave)
+      const camelRuns = text.match(/[A-Z][a-z]{2,}(?=[A-Z])/g);
+      if (camelRuns && camelRuns.length >= 3) return true;
+      return false;
     }
 
     // Clean extracted text: strip bare URLs, excess whitespace

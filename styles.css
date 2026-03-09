@@ -10,12 +10,15 @@
   bottom: 0;
   left: 0;
   width: 100vw;
-  height: 160px;
+  height: auto;
+  min-height: 80px;
+  max-height: 50vh;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
   align-items: center;
-  padding: 16px 16px 32px;
+  padding: 40px 16px 24px;
   gap: 4px;
   z-index: 2147483647;
   pointer-events: none;
@@ -112,8 +115,8 @@
 /* ---- Responsive ---- */
 @media (max-width: 768px) {
   #ss-overlay {
-    height: 120px;
-    padding: 12px;
+    min-height: 60px;
+    padding: 32px 12px 16px;
   }
 
   #ss-translation {
@@ -133,8 +136,8 @@
 
 @media (max-width: 480px) {
   #ss-overlay {
-    height: 100px;
-    padding: 10px;
+    min-height: 50px;
+    padding: 24px 10px 12px;
   }
 
   #ss-translation {
