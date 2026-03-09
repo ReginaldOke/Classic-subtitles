@@ -2069,17 +2069,27 @@
     }
 
     // ---- Highlight source element ----
+    // Uses inline styles (not CSS class) for maximum reliability — works through
+    // Shadow DOM boundaries and overrides any page CSS specificity.
     _highlightElement(el) {
       this._clearHighlight();
       if (this.settings.highlightMode && el) {
-        el.classList.add('ss-highlighted');
+        // Store originals so we can restore them
+        this._prevOutline = el.style.outline;
+        this._prevOutlineOffset = el.style.outlineOffset;
+        this._prevBorderRadius = el.style.borderRadius;
+        el.style.outline = '1px solid #F1D871';
+        el.style.outlineOffset = '2px';
+        el.style.borderRadius = '2px';
         this._highlightedEl = el;
       }
     }
 
     _clearHighlight() {
       if (this._highlightedEl) {
-        this._highlightedEl.classList.remove('ss-highlighted');
+        this._highlightedEl.style.outline = this._prevOutline || '';
+        this._highlightedEl.style.outlineOffset = this._prevOutlineOffset || '';
+        this._highlightedEl.style.borderRadius = this._prevBorderRadius || '';
         this._highlightedEl = null;
       }
     }
