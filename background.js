@@ -94,7 +94,7 @@ async function handleTranslation(text, targetLang) {
   // Validate language code
   const lang = VALID_LANGS.has(targetLang) ? targetLang : 'es';
 
-  const trimmed = text.trim().substring(0, 500); // Cap length
+  const trimmed = text.trim().substring(0, 1500); // Cap length (supports full paragraphs)
   const cacheKey = `t|${trimmed}|${lang}`; // Prefix 't|' to namespace translation cache keys
 
   // Check in-memory cache
@@ -154,17 +154,27 @@ async function handleBatchTranslation(texts, targetLang) {
 }
 
 async function callTranslateAPI(text, targetLang) {
-  const params = new URLSearchParams({
+  const baseParams = new URLSearchParams({
     client: 'gtx',
     sl: 'auto',
     tl: targetLang,
     dt: 't',
-    q: text
   });
 
-  const url = `${TRANSLATE_URL}?${params.toString()}`;
+  let response;
+  if (text.length > 500) {
+    // Use POST for longer texts to avoid URL length limits
+    const body = new URLSearchParams({ ...Object.fromEntries(baseParams), q: text });
+    response = await fetch(TRANSLATE_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+    });
+  } else {
+    baseParams.set('q', text);
+    response = await fetch(`${TRANSLATE_URL}?${baseParams.toString()}`);
+  }
 
-  const response = await fetch(url);
   if (!response.ok) {
     throw new Error(`Translation API returned ${response.status}`);
   }

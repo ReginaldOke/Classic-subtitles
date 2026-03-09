@@ -464,7 +464,7 @@
 
     async translate(text, lang = 'es') {
       if (!text?.trim()) return null;
-      const cleaned = text.trim().substring(0, 500);
+      const cleaned = text.trim().substring(0, 1500);
       const key = `${cleaned}|${lang}`;
 
       if (this.cache.has(key)) return this.cache.get(key);
@@ -2124,7 +2124,7 @@
         // Prefer the title attribute if present (e.g. YouTube #video-title)
         const titleAttr = child.getAttribute('title');
         const cText = (titleAttr && titleAttr.length >= 5) ? titleAttr.trim() : this._getVisibleText(child);
-        if (!cText || cText.length < 5 || cText.length > 500) continue;
+        if (!cText || cText.length < 5 || cText.length > 5000) continue;
         if (!/[a-zA-Z]{2,}/.test(cText)) continue;
         if (this._looksLikeCode(cText)) continue;
         if (this.extractor._isExcluded(child)) continue;
@@ -2139,12 +2139,12 @@
         const dist = Math.abs(cy - y) * 2 + Math.abs(cx - x) * 0.5;
         if (dist < bestDist) {
           bestDist = dist;
-          bestChild = { el: child, text: cText.substring(0, 300) };
+          bestChild = { el: child, text: cText.substring(0, 1500) };
         }
       }
 
-      // If best child's text is still long, extract sentences near cursor
-      if (bestChild && bestChild.text.length > 300) {
+      // If best child's text is very long, extract sentences near cursor
+      if (bestChild && bestChild.text.length > 1500) {
         const sentences = this._extractNearbySentences(bestChild.el, x, y);
         if (sentences) bestChild.text = sentences;
       }
@@ -2152,14 +2152,14 @@
       return bestChild;
     }
 
-    // Extract 1-2 sentences near cursor from long text block
+    // Extract sentences near cursor from long text block (up to 1500 chars)
     _extractNearbySentences(el, x, y) {
       const fullText = this._cleanExtractedText(this._getVisibleText(el));
       if (!fullText || fullText.length < 10) return null;
-      if (fullText.length <= 300) return fullText;
+      if (fullText.length <= 1500) return fullText;
 
       const sentences = fullText.match(/[^.!?\n]+(?:[.!?\n]+|\s*$)/g) || [fullText];
-      if (sentences.length <= 1) return fullText.substring(0, 300);
+      if (sentences.length <= 1) return fullText.substring(0, 1500);
 
       // Try to find cursor position in text using caretRangeFromPoint
       let charOffset = -1;
@@ -2188,7 +2188,7 @@
         charOffset = Math.floor(relY * fullText.length);
       }
 
-      // Find sentence containing cursor
+      // Find sentence containing cursor and grab surrounding sentences up to 1500 chars
       let running = 0, bestIdx = 0;
       for (let i = 0; i < sentences.length; i++) {
         if (running + sentences[i].length > charOffset) { bestIdx = i; break; }
@@ -2196,8 +2196,26 @@
         bestIdx = i;
       }
 
-      const result = sentences.slice(bestIdx, Math.min(sentences.length, bestIdx + 2)).join('').trim();
-      return result.substring(0, 300) || fullText.substring(0, 300);
+      // Expand outward from bestIdx to gather more sentences up to limit
+      let startIdx = bestIdx, endIdx = bestIdx + 1;
+      let totalLen = sentences[bestIdx].length;
+      while (totalLen < 1500) {
+        let expanded = false;
+        if (startIdx > 0 && totalLen + sentences[startIdx - 1].length <= 1500) {
+          startIdx--;
+          totalLen += sentences[startIdx].length;
+          expanded = true;
+        }
+        if (endIdx < sentences.length && totalLen + sentences[endIdx].length <= 1500) {
+          totalLen += sentences[endIdx].length;
+          endIdx++;
+          expanded = true;
+        }
+        if (!expanded) break;
+      }
+
+      const result = sentences.slice(startIdx, endIdx).join('').trim();
+      return result.substring(0, 1500) || fullText.substring(0, 1500);
     }
 
     _onScroll() {
@@ -2223,6 +2241,7 @@
     // ---- Shared: extract text from an element, drilling down for specificity ----
     _smartExtract(el, x, y, lenient = false) {
       // Reddit: if inside a shreddit-comment, extract that specific comment's content
+      // Return full text (up to 1500 chars) — visual truncation handled by chevron UI
       const rc = el.closest?.('shreddit-comment');
       if (rc) {
         // :scope > ensures we get THIS comment's content, not a nested reply's
@@ -2234,16 +2253,14 @@
           if (t && t.length >= 5 && /[a-zA-Z]{2,}/.test(t) && !this._looksLikeCode(t)) {
             let cleaned = this._cleanExtractedText(t);
             if (cleaned && cleaned.length >= 5) {
-              if (cleaned.length > 300) {
-                cleaned = this._extractNearbySentences(ce, x, y) || cleaned.substring(0, 300);
-              }
-              return { targetEl: ce, cleaned: cleaned.substring(0, 300) };
+              return { targetEl: ce, cleaned: cleaned.substring(0, 1500) };
             }
           }
         }
       }
 
       // Reddit feed: if on/inside a shreddit-post, extract post title or body
+      // Return full text (up to 1500 chars) — visual truncation handled by chevron UI
       const rp = el.closest?.('shreddit-post') ||
                  (el.tagName?.toLowerCase() === 'shreddit-post' ? el : null);
       if (rp && !rc) {
@@ -2258,10 +2275,7 @@
             if (t && t.length >= 5 && /[a-zA-Z]{2,}/.test(t) && !this._looksLikeCode(t)) {
               let cleaned = this._cleanExtractedText(t);
               if (cleaned && cleaned.length >= 5) {
-                if (cleaned.length > 300) {
-                  cleaned = this._extractNearbySentences(bodyEl, x, y) || cleaned.substring(0, 300);
-                }
-                return { targetEl: bodyEl, cleaned: cleaned.substring(0, 300) };
+                return { targetEl: bodyEl, cleaned: cleaned.substring(0, 1500) };
               }
             }
           }
@@ -2312,11 +2326,11 @@
       let targetEl = el;
       let cleaned;
 
-      if (rawText.length <= 300 && !this._hasConcatenatedActions(rawText)) {
-        // Short text without concatenated UI — use as-is after cleaning
+      if (rawText.length <= 1500 && !this._hasConcatenatedActions(rawText)) {
+        // Moderate text without concatenated UI — use as-is after cleaning
         cleaned = this._cleanExtractedText(rawText);
       } else {
-        // Long text or concatenated action text — drill down to find specific child
+        // Very long text or concatenated action text — drill down to find specific child
         const child = this._findBestChildNearPoint(el, x, y);
         if (child) {
           targetEl = child.el;
@@ -2328,7 +2342,7 @@
       }
 
       if (!cleaned || cleaned.length < 5 || this._looksLikeCode(cleaned)) return null;
-      cleaned = cleaned.substring(0, 300);
+      cleaned = cleaned.substring(0, 1500);
       return { targetEl, cleaned };
     }
 

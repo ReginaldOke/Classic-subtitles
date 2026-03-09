@@ -77,8 +77,9 @@
 }
 
 #ss-translation.ss-expanded {
-  max-height: none;
-  overflow: visible;
+  max-height: 60vh;
+  overflow-y: auto;
+  pointer-events: auto;
 }
 
 /* TTS mute/unmute button */
