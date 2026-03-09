@@ -341,6 +341,7 @@
       // Reset expand state
       this._expanded = false;
       this.translationEl.classList.remove('ss-expanded');
+      this.container.classList.remove('ss-content-expanded');
       if (this.chevronBtn) {
         this.chevronBtn.textContent = '\u2026 \u25BC'; // … ▼
         this.chevronBtn.style.display = 'none';
@@ -375,6 +376,8 @@
     _toggleExpand() {
       this._expanded = !this._expanded;
       this.translationEl.classList.toggle('ss-expanded', this._expanded);
+      // Also expand the overlay container so it doesn't clip
+      this.container?.classList.toggle('ss-content-expanded', this._expanded);
       if (this.chevronBtn) {
         this.chevronBtn.textContent = this._expanded ? '\u25B2' : '\u2026 \u25BC'; // ▲ or … ▼
       }

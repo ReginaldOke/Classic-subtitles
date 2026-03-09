@@ -32,6 +32,13 @@
   opacity: 1 !important;
 }
 
+/* When translation text is expanded, let the overlay grow to accommodate */
+#ss-overlay.ss-content-expanded {
+  max-height: 80vh;
+  overflow-y: auto;
+  pointer-events: auto;
+}
+
 /* Original text (English) — hidden by default */
 /* Color is set dynamically by JS (_syncOriginalColor) for contrast */
 #ss-original {
