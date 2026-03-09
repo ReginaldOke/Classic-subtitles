@@ -708,18 +708,22 @@
         // Skip if inside an action bar section
         if (span.closest('section')) continue;
         // Skip very short text (usernames, timestamps)
-        const text = span.textContent?.trim();
+        const text = this._getVisibleText(span);
         if (!text || text.length < 8 || text.length > 800) continue;
         if (!/[a-zA-Z]{2,}/.test(text)) continue;
         if (this._isExcluded(span)) continue;
+        if (this._isNonContentText(text)) continue;
+        if (this._looksLikeCode(text)) continue;
         return { text: text.substring(0, 300), element: span };
       }
 
       // Fallback: any caption-like text in the article
       for (const span of spans) {
-        const text = span.textContent?.trim();
+        const text = this._getVisibleText(span);
         if (!text || text.length < 8 || text.length > 800) continue;
         if (!/[a-zA-Z]{2,}/.test(text)) continue;
+        if (this._isNonContentText(text)) continue;
+        if (this._looksLikeCode(text)) continue;
         return { text: text.substring(0, 300), element: span };
       }
 
@@ -730,6 +734,7 @@
       // Facebook feed: find the post closest to viewport center, then its caption.
       // Posts are in div[role="article"] or div[data-ad-preview] containers.
       // Post text is in div[dir="auto"] or span[dir="auto"] within the post.
+      // Use _getVisibleText to skip Facebook's obfuscated anti-scrape text.
 
       // Try post-level containers first
       const posts = document.querySelectorAll('[role="article"]');
@@ -750,10 +755,13 @@
             // Skip if the element is a nested article (comment)
             const parentArticle = el.closest('[role="article"]');
             if (parentArticle && parentArticle !== bestPost) continue;
-            const text = el.textContent?.trim();
+            // Use _getVisibleText to filter out aria-hidden anti-scrape text
+            const text = this._getVisibleText(el);
             if (!text || text.length < 8 || text.length > 800) continue;
             if (!/[a-zA-Z]{2,}/.test(text)) continue;
             if (this._isExcluded(el)) continue;
+            if (this._isNonContentText(text)) continue;
+            if (this._looksLikeCode(text)) continue;
             return { text: text.substring(0, 300), element: el };
           }
         }
@@ -780,8 +788,9 @@
                        bestPost.querySelector('.feed-shared-text span[dir="ltr"]') ||
                        bestPost.querySelector('span[dir="ltr"]');
           if (desc) {
-            const text = desc.textContent?.trim();
-            if (text && text.length >= 8 && /[a-zA-Z]{2,}/.test(text)) {
+            const text = this._getVisibleText(desc);
+            if (text && text.length >= 8 && /[a-zA-Z]{2,}/.test(text) &&
+                !this._isNonContentText(text) && !this._looksLikeCode(text)) {
               return { text: text.substring(0, 300), element: desc };
             }
           }
@@ -802,12 +811,16 @@
         try {
           for (const el of document.querySelectorAll(sel)) {
             // If preferAttr is given (e.g. 'title'), use that attribute for clean text
+            // Otherwise use _getVisibleText which filters out hidden/aria-hidden nodes
             const text = (preferAttr && el.getAttribute(preferAttr))
               ? el.getAttribute(preferAttr).trim()
-              : el.textContent?.trim();
+              : this._getVisibleText(el);
             if (!text || text.length < 8 || text.length > 800) continue;
             if (!/[a-zA-Z]{2,}/.test(text)) continue;
             if (this._isExcluded(el)) continue;
+            if (this._isNonContentText(text)) continue;
+            if (this._looksLikeCode(text)) continue;
+            if (this._hasConcatenatedActions(text)) continue;
             const rect = el.getBoundingClientRect();
             const score = this._vScore(rect);
             if (score > bestScore) {
@@ -2069,40 +2082,135 @@
 
     // ---- Smart text extraction helpers ----
 
-    // Get visible text from element, excluding script/style/template content
+    // Get visible text from element, excluding hidden/invisible/non-content nodes
     _getVisibleText(el) {
-      // Fast path: no script/style children → textContent is safe
-      if (!el.querySelector?.('script, style, noscript, template')) {
-        return el.textContent?.trim();
-      }
-      // Collect text excluding script/style content
+      // Always use the walk method to skip non-visible content.
+      // Facebook and other sites insert obfuscated text in aria-hidden spans,
+      // 0-height divs, and other invisible containers.
       let text = '';
       const walk = (node) => {
         if (node.nodeType === 3) { text += node.textContent; return; }
+        if (node.nodeType !== 1) return; // only process element nodes
         const tag = node.tagName?.toLowerCase();
-        if (tag === 'script' || tag === 'style' || tag === 'noscript' || tag === 'template') return;
+        // Skip script/style/template/svg (SVG can contain obfuscated text nodes)
+        if (tag === 'script' || tag === 'style' || tag === 'noscript' ||
+            tag === 'template' || tag === 'svg') return;
+        // Skip aria-hidden elements (screen reader text, obfuscated anti-scrape decorations)
+        if (node.getAttribute('aria-hidden') === 'true') return;
+        // Skip explicitly hidden elements (display:none, visibility:hidden, 0-size)
+        // Use offsetParent check first (fast), then fall back to computed style
+        if (node !== el && tag !== 'span' && tag !== 'br' && tag !== 'wbr') {
+          // Block-level elements: check offsetParent (null = hidden via display:none or similar)
+          if (node.offsetParent === null && node.offsetHeight === 0 && node.offsetWidth === 0) {
+            // Double-check: position:fixed elements have null offsetParent but are visible
+            const s = node.style;
+            if (s && (s.display === 'none' || s.visibility === 'hidden')) return;
+            // getComputedStyle as last resort for truly hidden elements
+            try {
+              const cs = getComputedStyle(node);
+              if (cs.display === 'none' || cs.visibility === 'hidden') return;
+            } catch {}
+          }
+        }
+        // Skip spans/elements with explicit inline hiding (Facebook anti-scrape uses these)
+        const inlineStyle = node.getAttribute('style') || '';
+        if (/display\s*:\s*none|visibility\s*:\s*hidden|font-size\s*:\s*0|overflow\s*:\s*hidden.*height\s*:\s*0|height\s*:\s*0.*overflow\s*:\s*hidden/i.test(inlineStyle)) return;
         for (const child of node.childNodes) walk(child);
       };
       walk(el);
       return text.trim();
     }
 
-    // Detect text that looks like JavaScript/CSS code (not natural language)
+    // Detect text that looks like code, obfuscated strings, or garbled non-language
     _looksLikeCode(text) {
-      if (!text || text.length < 20) return false;
-      const codeSignals = (text.match(/===|!==|=>|\|\||;\s*\w|\.querySelector|\.addEventListener|\.className|null;|undefined;|function\s*\(|const\s+\w+=|let\s+\w+=|var\s+\w+=|\}\s*\)|\btypeof\b|\bwindow\./g) || []).length;
-      return codeSignals >= 2;
+      if (!text || text.length < 10) return false;
+
+      // 1. JavaScript/CSS code patterns
+      if (text.length >= 20) {
+        const codeSignals = (text.match(/===|!==|=>|\|\||;\s*\w|\.querySelector|\.addEventListener|\.className|null;|undefined;|function\s*\(|const\s+\w+=|let\s+\w+=|var\s+\w+=|\}\s*\)|\btypeof\b|\bwindow\./g) || []).length;
+        if (codeSignals >= 2) return true;
+      }
+
+      // 2. Obfuscated/garbled strings (Facebook anti-scrape, CSS class names)
+      // Tokens with mixed letters+digits in non-word patterns like "am7a892f6atc49"
+      const tokens = text.split(/\s+/);
+      let garbledTokens = 0;
+      for (const tok of tokens) {
+        if (tok.length < 5) continue;
+        const hasLetters = /[a-zA-Z]/.test(tok);
+        const hasDigits = /\d/.test(tok);
+        if (hasLetters && hasDigits) {
+          const digitRatio = (tok.match(/\d/g) || []).length / tok.length;
+          // Significant digit mixing in a "word" = garbled (not dates, not "24px")
+          if (digitRatio > 0.15 && digitRatio < 0.85 && tok.length > 6) garbledTokens++;
+        }
+        // Very long tokens with no vowels or very few = likely hashed/obfuscated
+        if (tok.length > 10 && hasLetters) {
+          const vowelRatio = (tok.match(/[aeiouAEIOU]/g) || []).length / tok.length;
+          if (vowelRatio < 0.1) garbledTokens++;
+        }
+      }
+      if (garbledTokens >= 2) return true;
+      // Single garbled token that IS the whole text
+      if (garbledTokens >= 1 && tokens.length <= 2) return true;
+
+      // 3. Long string with no spaces at all (likely a CSS class, hash, or encoded string)
+      if (text.length > 20 && !text.includes(' ') && !/^https?:\/\//.test(text)) return true;
+
+      return false;
     }
 
     // Detect concatenated UI text (action buttons + content mashed together)
     _hasConcatenatedActions(text) {
-      // Instagram/social: LikeCommentShareSave etc.
-      if (/(?:Like|Comment|Share|Save|Send|Reply|Repost|Follow)\d*(?:Like|Comment|Share|Save|Send|Reply|Repost|Follow|[A-Z])/i.test(text)) return true;
-      // YouTube: Tap to unmute2xSearchInfoShopping etc.
-      if (/(?:Search|Info|Shopping|Subscribe|Upcoming|Cancel|Play now)\w*(?:Search|Info|Shopping|Subscribe|Upcoming|Cancel|Play now|[A-Z])/i.test(text)) return true;
-      // Generic: 4+ CamelCase words jammed together (LikeCommentShareSave)
-      const camelRuns = text.match(/[A-Z][a-z]{2,}(?=[A-Z])/g);
+      if (!text) return false;
+      const t = text.trim();
+
+      // 1. Social actions concatenated: LikeCommentShareSave etc.
+      if (/(?:Like|Comment|Share|Save|Send|Reply|Repost|Follow)\d*(?:Like|Comment|Share|Save|Send|Reply|Repost|Follow|[A-Z])/i.test(t)) return true;
+
+      // 2. YouTube: Tap to unmute2xSearchInfoShopping etc.
+      if (/(?:Search|Info|Shopping|Subscribe|Upcoming|Cancel|Play now)\w*(?:Search|Info|Shopping|Subscribe|Upcoming|Cancel|Play now|[A-Z])/i.test(t)) return true;
+
+      // 3. Navigation/UI words concatenated without spaces: PreviousNext, ToolsPro, etc.
+      // Two or more UI words stuck together as a single "word" (no spaces)
+      const uiWordPattern = /^(?:Previous|Next|Back|Forward|Close|Open|Cancel|Submit|Loading|Search|Filter|Sort|Menu|Tools|Settings|Options|More|Less|View|Edit|Delete|Remove|Add|New|Save|Undo|Redo|Refresh|Home|Up|Down|Left|Right|First|Last|Show|Hide|Toggle|Select|Clear|Reset|Apply|Done|Skip|Play|Pause|Stop|Mute|Unmute|Pro|Plus|Premium|Free|Upgrade|Sign|Log|Login|Logout|Profile|Account|Help|Info|About|Contact|Privacy|Terms|Accept|Decline|Dismiss|Learn|Read|Watch|Listen|Download|Upload|Import|Export|Copy|Paste|Print|Zoom|Expand|Collapse|Minimize|Maximize|Fullscreen|Exit|Shared|Public|Friends|Everyone){2,}$/i;
+      // Check each whitespace-separated token
+      for (const word of t.split(/\s+/)) {
+        if (word.length > 5 && uiWordPattern.test(word)) return true;
+      }
+
+      // 4. Generic: 2+ CamelCase words jammed together (PreviousNext, ToolsPro)
+      const camelRuns = t.match(/[A-Z][a-z]{2,}(?=[A-Z])/g);
+      if (camelRuns && camelRuns.length >= 2) {
+        // If the text is ONLY the concatenated words (no surrounding sentence), reject it
+        const joined = t.replace(/\s+/g, '');
+        if (joined.length < 30) return true;
+      }
+      // Still reject 3+ CamelCase even in longer text
       if (camelRuns && camelRuns.length >= 3) return true;
+
+      return false;
+    }
+
+    // Detect text that is metadata, UI labels, or non-content (not worth translating)
+    _isNonContentText(text) {
+      if (!text) return true;
+      const t = text.trim();
+      if (t.length < 3) return true;
+
+      // Exact-match known metadata/UI labels (case insensitive)
+      const metadataPattern = /^(shared with (public|friends|everyone|friends of friends)|public(ly)?|friends only|only me|see more|see less|view all|load more|show more|show less|edited|pinned|sponsored|promoted|suggested for you|suggested|recommended|verified|following|follow|unfollow|liked?|comment|share|send|saved?|reply|retweet|repost|quote|bookmark|report|block|mute|hide|not interested|turn on notifications|see translation|translate tweet|translated by|original|view translation|view original|most relevant|newest first|all comments|people also viewed|you might like|add a comment|write a comment|log in|sign up|sign in|create account|learn more|read more|view more|shop now|see all|sell|buy|post|x|×|\.\.\.)$/i;
+      if (metadataPattern.test(t)) return true;
+
+      // Starts with "Shared with" (Facebook privacy label variants)
+      if (/^shared with\b/i.test(t) && t.length < 40) return true;
+
+      // Engagement metrics patterns: "1.7K", "123 shares", "44 comments"
+      if (/^\d[\d.,KkMmBb]*\s*(comments?|shares?|likes?|views?|reactions?|replies?|retweets?|reposts?|followers?|following)?\s*$/i.test(t)) return true;
+
+      // Timestamp-like short text: "1h", "2d", "3w", "5m ago", "Just now", "Yesterday"
+      if (/^(\d+[smhdw]|just now|yesterday|today|\d+ (?:seconds?|minutes?|hours?|days?|weeks?|months?|years?) ago)$/i.test(t)) return true;
+
       return false;
     }
 
