@@ -1326,10 +1326,10 @@
         if (!this.active || !this.overlay.container) return;
         if (document.fullscreenElement) {
           try { document.fullscreenElement.appendChild(this.overlay.container); } catch {}
-          // Always use dark gradient in fullscreen (video content is always dark)
-          this.overlay.container.style.background =
-            'linear-gradient(180deg, rgba(0,0,0,0) 0px, rgba(0,0,0,0.85) 50px)';
-          // Mark fullscreen so _syncBg() won't override our dark gradient
+          // No background in fullscreen — yellow text with black stroke
+          // is perfectly readable against video content
+          this.overlay.container.style.background = 'none';
+          // Mark fullscreen so _syncBg() won't override
           this.overlay._inFullscreen = true;
           // Original text: white on black in fullscreen
           this.overlay._syncOriginalColor('rgb(0, 0, 0)');

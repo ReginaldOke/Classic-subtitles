@@ -110,6 +110,20 @@
   position: fixed;
   bottom: 0;
   z-index: 2147483647;
+  background: none !important;
+}
+
+/* Thicker stroke in fullscreen for contrast against bright video scenes */
+:fullscreen #ss-translation,
+:-webkit-full-screen #ss-translation {
+  -webkit-text-stroke: 1.5px #000000 !important;
+  text-shadow: 0 0 4px rgba(0,0,0,0.8), 0 0 8px rgba(0,0,0,0.5);
+}
+
+:fullscreen #ss-original,
+:-webkit-full-screen #ss-original {
+  -webkit-text-stroke: 0.8px #000000 !important;
+  text-shadow: 0 0 3px rgba(0,0,0,0.8), 0 0 6px rgba(0,0,0,0.5);
 }
 
 /* ---- Responsive ---- */
