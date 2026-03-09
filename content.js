@@ -19,8 +19,10 @@
       this.translationEl = null;
       this.ttsRow = null;
       this.ttsButton = null;
-      this.chevronBtn = null;
+      this.seeMoreBtn = null;
       this.closeBtn = null;
+      this.collapseBtn = null;
+      this._collapsed = false;
       this.showBackground = false;
       this.ttsEnabled = false;
       this._expanded = false;
@@ -46,16 +48,17 @@
       this.translationEl = document.createElement('div');
       this.translationEl.id = 'ss-translation';
 
-      // Chevron ("… ▼") inside translation — bottom-right, shown when text overflows
-      this.chevronBtn = document.createElement('button');
-      this.chevronBtn.id = 'ss-chevron-btn';
-      this.chevronBtn.textContent = '\u2026 \u25BC'; // … ▼
-      this.chevronBtn.style.display = 'none';
-      this.chevronBtn.addEventListener('click', (e) => {
+      // "see more" / "see less" link inside translation — shown when text overflows
+      this.seeMoreBtn = document.createElement('button');
+      this.seeMoreBtn.id = 'ss-see-more-btn';
+      this.seeMoreBtn.style.display = 'none';
+      this._seeMoreLabels = this._getSeeMoreLabels();
+      this.seeMoreBtn.textContent = '\u2026 ' + this._seeMoreLabels.more; // "… see more"
+      this.seeMoreBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         this._toggleExpand();
       });
-      this.translationEl.appendChild(this.chevronBtn);
+      this.translationEl.appendChild(this.seeMoreBtn);
 
       this.ttsButton = document.createElement('button');
       this.ttsButton.id = 'ss-tts-btn';
@@ -65,8 +68,18 @@
         this._toggleTTS();
       });
 
+      // Collapse/expand chevron — sits to the right of the text in the tts row
+      this.collapseBtn = document.createElement('button');
+      this.collapseBtn.id = 'ss-collapse-btn';
+      this.collapseBtn.innerHTML = `<svg width="40" height="40" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M17.9999 9.37311C18.0017 9.2646 17.9711 9.15802 17.9119 9.06701C17.8528 8.976 17.7679 8.90469 17.6681 8.8622C17.5682 8.8197 17.4579 8.80796 17.3514 8.82846C17.2448 8.84896 17.1468 8.90079 17.0698 8.9773L11.9994 13.8772L6.92897 8.9773C6.87763 8.92659 6.81674 8.88657 6.74984 8.85955C6.68293 8.83254 6.61133 8.81906 6.53918 8.8199C6.46703 8.82075 6.39579 8.8359 6.32953 8.86447C6.26328 8.89305 6.20333 8.93448 6.1532 8.98638C6.10307 9.03827 6.06373 9.09959 6.03746 9.1668C6.01119 9.234 5.9985 9.30575 6.00015 9.37788C6.0018 9.45002 6.01775 9.52111 6.04706 9.58704C6.07637 9.65298 6.11846 9.71244 6.17091 9.76199L11.6201 15.0279C11.7218 15.1263 11.8578 15.1813 11.9994 15.1813C12.1409 15.1813 12.2769 15.1263 12.3787 15.0279L17.8278 9.76199C17.8811 9.71199 17.9238 9.65181 17.9533 9.58501C17.9829 9.51821 17.9987 9.44615 17.9999 9.37311Z" fill="#F1D871" stroke="#000000" stroke-width="1.2" paint-order="stroke fill"/></svg>`;
+      this.collapseBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this._toggleCollapse();
+      });
+
       this.ttsRow.appendChild(this.translationEl);
       this.ttsRow.appendChild(this.ttsButton);
+      this.ttsRow.appendChild(this.collapseBtn);
 
       this.originalEl = document.createElement('div');
       this.originalEl.id = 'ss-original';
@@ -87,21 +100,54 @@
       document.body.appendChild(this.closeBtn);
     }
 
+    // ---- "See more" / "See less" labels in browser locale ----
+    _getSeeMoreLabels() {
+      const lang = (navigator.language || 'en').substring(0, 2).toLowerCase();
+      const labels = {
+        en: { more: 'see more', less: 'see less' },
+        es: { more: 'ver más', less: 'ver menos' },
+        fr: { more: 'voir plus', less: 'voir moins' },
+        de: { more: 'mehr sehen', less: 'weniger sehen' },
+        it: { more: 'vedi altro', less: 'vedi meno' },
+        pt: { more: 'ver mais', less: 'ver menos' },
+        ja: { more: 'もっと見る', less: '折りたたむ' },
+        ko: { more: '더 보기', less: '접기' },
+        zh: { more: '查看更多', less: '收起' },
+        ar: { more: 'عرض المزيد', less: 'عرض أقل' },
+        hi: { more: 'और देखें', less: 'कम देखें' },
+        ru: { more: 'ещё', less: 'свернуть' },
+        nl: { more: 'meer zien', less: 'minder zien' },
+        sv: { more: 'se mer', less: 'se mindre' },
+        pl: { more: 'zobacz więcej', less: 'zwiń' },
+        tr: { more: 'daha fazla', less: 'daha az' },
+      };
+      return labels[lang] || labels.en;
+    }
+
     // ---- TTS: inline SVG icons ----
     _ttsIcon(on) {
+      // Speaker body — shared between both states
+      // Black outline behind via paint-order, then gold fill on top
+      const speaker = `<path d="M11 5L6 9H2v6h4l5 4V5z" fill="currentColor" stroke="#000000" stroke-width="2.4" stroke-linejoin="round" paint-order="stroke fill"/>`;
       if (on) {
         // Speaker with sound waves (unmuted)
-        return `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M11 5L6 9H2v6h4l5 4V5z" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+        // Each arc: black outline underneath, then gold arc on top
+        return `<svg viewBox="-1 -1 26 26" overflow="visible" fill="none" xmlns="http://www.w3.org/2000/svg">
+          ${speaker}
+          <path d="M15.54 8.46a5 5 0 010 7.07" stroke="#000000" stroke-width="4.4" stroke-linecap="round"/>
           <path d="M15.54 8.46a5 5 0 010 7.07" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <path d="M19.07 4.93a10 10 0 010 14.14" stroke="#000000" stroke-width="4.4" stroke-linecap="round"/>
           <path d="M19.07 4.93a10 10 0 010 14.14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
         </svg>`;
       }
       // Speaker with X (muted)
-      return `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <path d="M11 5L6 9H2v6h4l5 4V5z" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
-        <line x1="23" y1="9" x2="17" y2="15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        <line x1="17" y1="9" x2="23" y2="15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      // Each line: black outline underneath, then gold line on top
+      return `<svg viewBox="-1 -1 26 26" overflow="visible" fill="none" xmlns="http://www.w3.org/2000/svg">
+        ${speaker}
+        <line x1="22" y1="9" x2="16" y2="15" stroke="#000000" stroke-width="4.4" stroke-linecap="round"/>
+        <line x1="22" y1="9" x2="16" y2="15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <line x1="16" y1="9" x2="22" y2="15" stroke="#000000" stroke-width="4.4" stroke-linecap="round"/>
+        <line x1="16" y1="9" x2="22" y2="15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
       </svg>`;
     }
 
@@ -130,13 +176,21 @@
       const lang = this._ttsLang || 'es';
       const v = this._ttsVoices;
       if (!v.length) return;
-      this._ttsVoice =
-        v.find(x => x.lang === lang + '-ES') ||
-        v.find(x => x.lang === lang + '-MX') ||
-        v.find(x => x.lang.startsWith(lang + '-')) ||
-        v.find(x => x.lang.startsWith(lang)) ||
-        v.find(x => x.lang.includes(lang)) ||
-        null;
+      // Filter voices matching the target language
+      const matches =
+        v.filter(x => x.lang === lang + '-ES') .concat(
+        v.filter(x => x.lang === lang + '-MX'),
+        v.filter(x => x.lang.startsWith(lang + '-')),
+        v.filter(x => x.lang.startsWith(lang)),
+        v.filter(x => x.lang.includes(lang)));
+      // De-duplicate while preserving order
+      const seen = new Set();
+      const unique = matches.filter(x => { if (seen.has(x)) return false; seen.add(x); return true; });
+      if (!unique.length) { this._ttsVoice = null; return; }
+      // Prefer female-sounding voices (common female voice name patterns)
+      const femaleRx = /\b(female|helena|sabina|paulina|monica|lucia|elvira|conchita|penelope|lupe|mia|ines|francisca|carmen|zira|hazel|susan|samantha|fiona)\b/i;
+      const female = unique.find(x => femaleRx.test(x.name));
+      this._ttsVoice = female || unique[0];
     }
 
     _updateTTSVoice(lang) {
@@ -204,17 +258,14 @@
       }
     }
 
-    // ---- TTS: unified speak (picks best method) ----
+    // ---- TTS: unified speak — always uses chrome.tts (single engine) ----
     _speak(text) {
       if (!text?.trim()) return;
-      // Use chrome.tts (background) as primary — it's more reliable in extensions
-      if (this._ttsMethod !== 'web') {
-        this._speakChrome(text);
-      } else {
-        if (!this._speakWeb(text)) {
-          this._speakChrome(text);
-        }
-      }
+      // Always stop any in-progress speech first to prevent dual-engine overlap
+      this._stopSpeech();
+      // Use chrome.tts exclusively — it's more reliable and avoids
+      // the dual-engine bug where web speech + chrome.tts play different voices
+      this._speakChrome(text);
     }
 
     _stopSpeech() {
@@ -231,16 +282,9 @@
       this.ttsButton.innerHTML = this._ttsIcon(this.ttsEnabled);
 
       if (this.ttsEnabled) {
-        // Speak current text immediately
-        const text = this.translationEl?.textContent?.trim();
-        if (text) {
-          // Try web speech FIRST on user gesture (synchronous = preserves gesture)
-          // Then fall back to chrome.tts if that fails
-          if (!this._speakWeb(text)) {
-            this._ttsMethod = 'chrome';
-            this._speakChrome(text);
-          }
-        }
+        // Speak current text immediately via chrome.tts (single engine)
+        const text = this._getTranslationText();
+        if (text) this._speak(text);
       } else {
         this._stopSpeech();
       }
@@ -273,6 +317,11 @@
 
       // Always adapt original text color to page background
       this._syncOriginalColor(bg);
+
+      // Adapt see-more gradient if visible
+      if (this.seeMoreBtn && this.seeMoreBtn.style.display !== 'none') {
+        this._syncSeeMoreBg();
+      }
     }
 
     // Adapt original text color based on background luminance
@@ -342,23 +391,25 @@
       this._expanded = false;
       this.translationEl.classList.remove('ss-expanded');
       this.container.classList.remove('ss-content-expanded');
-      if (this.chevronBtn) {
-        this.chevronBtn.textContent = '\u2026 \u25BC'; // … ▼
-        this.chevronBtn.style.display = 'none';
+      // Don't auto-uncollapse on auto-extraction, only on user interaction
+      // (ClassicSubtitles will uncollapse on click via overlay.uncollapse())
+      if (this.seeMoreBtn) {
+        this.seeMoreBtn.textContent = '\u2026 ' + this._seeMoreLabels.more; // "… see more"
+        this.seeMoreBtn.style.display = 'none';
       }
 
-      // Set text while preserving the chevron button child
-      // Remove all children except the chevron, then prepend text node
-      while (this.translationEl.firstChild !== this.chevronBtn && this.translationEl.firstChild) {
+      // Set text while preserving the see-more button child
+      // Remove all children except the see-more btn, then prepend text node
+      while (this.translationEl.firstChild !== this.seeMoreBtn && this.translationEl.firstChild) {
         this.translationEl.removeChild(this.translationEl.firstChild);
       }
-      this.translationEl.insertBefore(document.createTextNode(translation), this.chevronBtn);
+      this.translationEl.insertBefore(document.createTextNode(translation), this.seeMoreBtn);
 
       this.originalEl.textContent = original;
       this.originalEl.style.display = original ? 'block' : 'none';
       this.container.classList.add('ss-visible');
 
-      // Check for text overflow after render (show chevron if > 3 lines)
+      // Check for text overflow after render (show "see more" if > 3 lines)
       // Double-rAF ensures layout is fully computed even on slow pages
       this._checkOverflow();
 
@@ -370,6 +421,23 @@
 
     hide() {
       this.container?.classList.remove('ss-visible');
+      // Clear stale text so it doesn't flash when the overlay fades back in
+      if (this.translationEl) {
+        while (this.translationEl.firstChild !== this.seeMoreBtn && this.translationEl.firstChild) {
+          this.translationEl.removeChild(this.translationEl.firstChild);
+        }
+      }
+      if (this.originalEl) this.originalEl.textContent = '';
+    }
+
+    // Get just the translation text (excludes "see more" button text)
+    _getTranslationText() {
+      if (!this.translationEl) return '';
+      let text = '';
+      for (const node of this.translationEl.childNodes) {
+        if (node.nodeType === 3) text += node.textContent; // text nodes only
+      }
+      return text.trim();
     }
 
     // ---- Expand / collapse long text ----
@@ -378,18 +446,21 @@
       this.translationEl.classList.toggle('ss-expanded', this._expanded);
       // Also expand the overlay container so it doesn't clip
       this.container?.classList.toggle('ss-content-expanded', this._expanded);
-      if (this.chevronBtn) {
-        this.chevronBtn.textContent = this._expanded ? '\u25B2' : '\u2026 \u25BC'; // ▲ or … ▼
+      if (this.seeMoreBtn) {
+        this.seeMoreBtn.textContent = this._expanded
+          ? this._seeMoreLabels.less
+          : '\u2026 ' + this._seeMoreLabels.more; // "… see more" when collapsed
       }
     }
 
     // Robust overflow detection: double-rAF + setTimeout fallback
     _checkOverflow() {
       const doCheck = () => {
-        if (!this.translationEl || !this.chevronBtn) return;
+        if (!this.translationEl || !this.seeMoreBtn) return;
         const el = this.translationEl;
         const overflows = el.scrollHeight > el.clientHeight + 2;
-        this.chevronBtn.style.display = overflows ? 'block' : 'none';
+        this.seeMoreBtn.style.display = overflows ? 'inline' : 'none';
+        if (overflows) this._syncSeeMoreBg();
       };
       // Double rAF to ensure layout is fully computed
       requestAnimationFrame(() => requestAnimationFrame(doCheck));
@@ -397,25 +468,83 @@
       setTimeout(doCheck, 120);
     }
 
-    // ---- Close button (click-lock dismiss) — positioned inside top-right of highlight box ----
+    // Adapt see-more gradient to page background (dark → dark fade, light → light fade)
+    _syncSeeMoreBg() {
+      if (!this.seeMoreBtn) return;
+      const bg = this._detectBg();
+      const m = bg.match(/rgba?\(\s*(\d+),\s*(\d+),\s*(\d+)/);
+      const lum = m ? (parseInt(m[1], 10) * 299 + parseInt(m[2], 10) * 587 + parseInt(m[3], 10) * 114) / 1000 : 0;
+      if (lum > 128) {
+        // Light page → fade to white
+        this.seeMoreBtn.style.background = 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.85) 30%)';
+      } else {
+        // Dark page → fade to black
+        this.seeMoreBtn.style.background = 'linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.7) 30%)';
+      }
+    }
+
+    // Force-uncollapse (used when user clicks text — they want to see the subtitle)
+    uncollapse() {
+      if (this._collapsed) {
+        this._collapsed = false;
+        this.container.classList.remove('ss-collapsed');
+        // Reset the inline background that _syncCollapseBg set on the pill
+        if (this.collapseBtn) this.collapseBtn.style.background = '';
+      }
+    }
+
+    // ---- Collapse / expand overlay (hide subtitles when in the way) ----
+    _toggleCollapse() {
+      this._collapsed = !this._collapsed;
+      this.container.classList.toggle('ss-collapsed', this._collapsed);
+      if (this._collapsed) {
+        // Adaptive background for the collapsed pill button
+        this._syncCollapseBg();
+        this._stopSpeech();
+      } else {
+        // Reset inline bg when expanding
+        if (this.collapseBtn) this.collapseBtn.style.background = '';
+      }
+      // Notify ClassicSubtitles so it can pause/resume extraction
+      if (typeof this._onCollapseChange === 'function') {
+        this._onCollapseChange(this._collapsed);
+      }
+    }
+
+    // Set collapse button background based on page luminance
+    _syncCollapseBg() {
+      if (!this.collapseBtn) return;
+      const bg = this._detectBg();
+      const m = bg.match(/rgba?\(\s*(\d+),\s*(\d+),\s*(\d+)/);
+      const lum = m ? (parseInt(m[1], 10) * 299 + parseInt(m[2], 10) * 587 + parseInt(m[3], 10) * 114) / 1000 : 0;
+      this.collapseBtn.style.background = lum > 128
+        ? 'rgba(255, 255, 255, 0.65)'  // light site — semi-transparent white
+        : 'rgba(0, 0, 0, 0.6)';        // dark site — semi-transparent black
+    }
+
+    // ---- Close button (click-lock dismiss) — anchored to highlighted element ----
+    // Uses position:absolute with document-relative coords so it scrolls with the text.
     showCloseBtn(highlightedEl) {
       if (!this.closeBtn) return;
       if (highlightedEl) {
         const rect = highlightedEl.getBoundingClientRect();
+        // Convert viewport coords to document coords (so it scrolls with the page)
+        const scrollX = window.scrollX || window.pageXOffset;
+        const scrollY = window.scrollY || window.pageYOffset;
         // outlineOffset is 2px, so the visible box extends 3px (1px outline + 2px offset) beyond rect
         // Position the button so its center sits on the top-right corner of the outline
         const btnSize = 18; // matches CSS width/height
         const half = btnSize / 2;
         const outlineGap = 3; // 1px outline + 2px offset
-        this.closeBtn.style.top = (rect.top - outlineGap - half) + 'px';
-        this.closeBtn.style.left = (rect.right + outlineGap - half) + 'px';
+        this.closeBtn.style.top = (rect.top + scrollY - outlineGap - half) + 'px';
+        this.closeBtn.style.left = (rect.right + scrollX + outlineGap - half) + 'px';
         this.closeBtn.style.right = '';
         // Adaptive background: dark bg → semi-transparent black, light bg → semi-transparent white
         const bg = this._detectBg();
         const m = bg.match(/rgba?\(\s*(\d+),\s*(\d+),\s*(\d+)/);
         const lum = m ? (parseInt(m[1], 10) * 299 + parseInt(m[2], 10) * 587 + parseInt(m[3], 10) * 114) / 1000 : 0;
         this.closeBtn.style.background = lum > 128
-          ? 'rgba(255, 255, 255, 0.75)'   // light site → white bg
+          ? 'rgba(0, 0, 0, 0.55)'         // light site → semi-transparent black bg
           : 'rgba(0, 0, 0, 0.75)';        // dark site → black bg
       }
       this.closeBtn.style.display = 'block';
@@ -519,9 +648,65 @@
 
     // YouTube non-watch pages (homepage, search, channels) — extract video titles only
     _youtube() {
-      // Use the 'title' attribute on #video-title elements — it contains only the
-      // clean title text, unlike textContent which can include player overlay controls
-      // (Tap to unmute, 2x, Search, Share, etc.) from video preview hover.
+      const isWatch = window.location.pathname.startsWith('/watch');
+
+      if (isWatch) {
+        // Watch page: find comments, description, or sidebar recommendations
+        // closest to viewport center. This enables scroll-to-translate when the
+        // user scrolls past the video player.
+        let best = null, bestScore = -Infinity, bestEl = null;
+
+        // Comments
+        for (const el of document.querySelectorAll('ytd-comment-renderer #content-text')) {
+          if (el.closest('#ss-overlay')) continue;
+          const text = this._getVisibleText(el);
+          if (!text || text.length < 10 || text.length > 500) continue;
+          if (!/[a-zA-Z]{2,}/.test(text)) continue;
+          const rect = el.getBoundingClientRect();
+          const score = this._vScore(rect);
+          if (score > bestScore) { bestScore = score; best = text.substring(0, 300); bestEl = el; }
+        }
+
+        // Sidebar recommendations
+        for (const el of document.querySelectorAll('ytd-compact-video-renderer #video-title')) {
+          const text = (el.getAttribute('title') || '').trim();
+          if (!text || text.length < 5) continue;
+          const rect = el.getBoundingClientRect();
+          const score = this._vScore(rect);
+          if (score > bestScore) { bestScore = score; best = text.substring(0, 300); bestEl = el; }
+        }
+
+        // Video description (if visible)
+        const descEl = document.querySelector('ytd-text-inline-expander #snippet-text, ytd-text-inline-expander .content');
+        if (descEl) {
+          const text = this._getVisibleText(descEl);
+          if (text && text.length >= 20 && /[a-zA-Z]{2,}/.test(text)) {
+            const rect = descEl.getBoundingClientRect();
+            const score = this._vScore(rect);
+            if (score > bestScore) {
+              bestScore = score;
+              best = text.length > 300 ? this._chunkNearCenter(text, rect) : text.substring(0, 300);
+              bestEl = descEl;
+            }
+          }
+        }
+
+        // Video title (always visible at top)
+        const titleEl = document.querySelector('h1.ytd-watch-metadata yt-formatted-string');
+        if (titleEl) {
+          const text = titleEl.textContent?.trim();
+          if (text && text.length >= 5) {
+            const rect = titleEl.getBoundingClientRect();
+            const score = this._vScore(rect);
+            if (score > bestScore) { bestScore = score; best = text.substring(0, 300); bestEl = titleEl; }
+          }
+        }
+
+        return best ? { text: best, element: bestEl } : null;
+      }
+
+      // Homepage/search/channel: use the 'title' attribute on #video-title elements
+      // (cleaner than textContent which can include player overlay controls)
       const result = this._bestVisible([
         'ytd-rich-item-renderer #video-title',        // Homepage grid
         'ytd-video-renderer #video-title',             // Search results
@@ -699,32 +884,30 @@
       if (!bestArticle) return null;
 
       // Within the winning article, find the caption text.
-      // Captions are span[dir="auto"] that are NOT inside a <ul> (comment list)
-      // and NOT inside a <section> (action bar with Like/Comment/Share/Save).
+      // Captions are span[dir="auto"] — skip comment lists (<ul>) but allow
+      // section containers (Instagram puts captions inside sections too).
       const spans = bestArticle.querySelectorAll('span[dir="auto"]');
       for (const span of spans) {
-        // Skip if inside a comment list
+        // Skip if inside a comment list (comments live in <ul> elements)
         if (span.closest('ul')) continue;
-        // Skip if inside an action bar section
-        if (span.closest('section')) continue;
-        // Skip very short text (usernames, timestamps)
+        // Skip very short text (usernames, timestamps, button labels)
         const text = this._getVisibleText(span);
-        if (!text || text.length < 8 || text.length > 800) continue;
+        if (!text || text.length < 15) continue;
         if (!/[a-zA-Z]{2,}/.test(text)) continue;
         if (this._isExcluded(span)) continue;
         if (this._isNonContentText(text)) continue;
         if (this._looksLikeCode(text)) continue;
-        return { text: text.substring(0, 300), element: span };
+        return { text: text.substring(0, 500), element: span };
       }
 
-      // Fallback: any caption-like text in the article
+      // Fallback: any caption-like text in the article (including inside <ul>)
       for (const span of spans) {
         const text = this._getVisibleText(span);
-        if (!text || text.length < 8 || text.length > 800) continue;
+        if (!text || text.length < 15) continue;
         if (!/[a-zA-Z]{2,}/.test(text)) continue;
         if (this._isNonContentText(text)) continue;
         if (this._looksLikeCode(text)) continue;
-        return { text: text.substring(0, 300), element: span };
+        return { text: text.substring(0, 500), element: span };
       }
 
       return null;
@@ -895,10 +1078,11 @@
           testId.includes('flair') || testId.includes('author')
         ) return true;
 
-        // Generic role checks — skip buttons, menus, navigation
+        // Generic role checks — skip buttons, menus, navigation, alerts
         // Note: 'dialog' excluded from this check because Instagram/etc. use dialogs for content
         const role = node.getAttribute?.('role') || '';
-        if (role === 'alertdialog' || role === 'banner' ||
+        if (role === 'alert' || role === 'alertdialog' || role === 'banner' ||
+            role === 'status' || role === 'log' || role === 'marquee' || role === 'timer' ||
             role === 'button' || role === 'menu' || role === 'menuitem' ||
             role === 'menubar' || role === 'toolbar' || role === 'tablist' ||
             role === 'navigation' || role === 'complementary') return true;
@@ -1002,6 +1186,7 @@
       this._captionSource = null; // 'intercepted'|'tracks'|'dom'|'directASR'
       this._pendingTracks = null;
       this._directASRAttempted = false;
+      this._tlangFailed = false; // Set true when YouTube's tlang returns degenerate data
 
       // Pause-mode state: when paused, show title + comments instead of captions
       this._paused = false;
@@ -1151,21 +1336,27 @@
         const lang = this.settings.targetLang || 'es';
 
         // Try with our target language (YouTube's own tlang translation)
-        url.searchParams.set('tlang', lang);
-        url.searchParams.set('fmt', 'json3');
+        // Skip if tlang previously produced degenerate data for this video
+        if (!this._tlangFailed) {
+          url.searchParams.set('tlang', lang);
+          url.searchParams.set('fmt', 'json3');
 
-        let resp = await fetch(url.toString());
-        if (resp.ok) {
-          const data = await resp.json();
-          if (this._loadCaptions(data, false)) {
-            this._captionSource = 'intercepted';
-            return;
+          let resp = await fetch(url.toString());
+          if (resp.ok) {
+            const data = await resp.json();
+            if (this._loadCaptions(data, false)) {
+              this._captionSource = 'intercepted';
+              return;
+            }
+            // tlang data was degenerate — remember so we don't retry
+            this._tlangFailed = true;
           }
         }
 
-        // tlang rejected — fetch original and translate ourselves
+        // tlang rejected or degenerate — fetch original and translate ourselves
         url.searchParams.delete('tlang');
-        resp = await fetch(url.toString());
+        url.searchParams.set('fmt', 'json3');
+        const resp = await fetch(url.toString());
         if (resp.ok) {
           const data = await resp.json();
           if (this._loadCaptions(data, true)) {
@@ -1206,19 +1397,24 @@
       const sep = track.baseUrl.includes('?') ? '&' : '?';
 
       // Try YouTube's own translation via tlang
-      try {
-        const resp = await fetch(track.baseUrl + sep + 'fmt=json3&tlang=' + lang);
-        if (resp.ok) {
-          const text = await resp.text();
-          if (text.length > 0) {
-            const data = JSON.parse(text);
-            if (this._loadCaptions(data, false)) {
-              this._captionSource = 'tracks';
-              return;
+      // Skip if tlang previously produced degenerate data for this video
+      if (!this._tlangFailed) {
+        try {
+          const resp = await fetch(track.baseUrl + sep + 'fmt=json3&tlang=' + lang);
+          if (resp.ok) {
+            const text = await resp.text();
+            if (text.length > 0) {
+              const data = JSON.parse(text);
+              if (this._loadCaptions(data, false)) {
+                this._captionSource = 'tracks';
+                return;
+              }
+              // tlang data was degenerate — remember so we don't retry
+              this._tlangFailed = true;
             }
           }
-        }
-      } catch {}
+        } catch {}
+      }
 
       // Fallback: original captions + Google Translate
       try {
@@ -1273,6 +1469,30 @@
         }))
         .filter(c => c.text.length > 0);
       if (track.length === 0) return false;
+
+      // Detect degenerate tracks — YouTube's tlang translation sometimes merges
+      // all captions into very few entries with huge durations (entire video in
+      // one subtitle). Reject these so caller falls back to original + Google Translate.
+      {
+        let maxDur = 0;
+        let totalDur = 0;
+        for (const c of track) {
+          const dur = c.end - c.start;
+          if (dur > maxDur) maxDur = dur;
+          totalDur += dur;
+        }
+        const avgDur = totalDur / track.length;
+        // Any single caption > 25s is degenerate (normal captions are 2-8s)
+        if (maxDur > 25) return false;
+        // Average duration > 12s with 3+ entries means degenerate merge
+        if (track.length >= 3 && avgDur > 12) return false;
+        // Very few entries for a long video span — likely degenerate merge
+        if (track.length < 3) {
+          const totalSpan = track[track.length - 1].end - track[0].start;
+          if (totalSpan > 20) return false;
+        }
+      }
+
       this.captionTrack = track;
       this._startSync(needsTranslation);
       return true;
@@ -1282,13 +1502,31 @@
       if (this.syncInterval) clearInterval(this.syncInterval);
       if (!this.captionTrack || !this.video) return;
       let lastIdx = -1;
+      let lastIdxTime = 0; // When lastIdx was set — detect stuck captions
+      let hasPlayed = false; // Don't show captions until video actually plays
       this.syncInterval = setInterval(async () => {
         if (!this.active) return;
         if (this._paused) return; // Pause mode handles overlay
+
+        // Refresh video ref if stale (YouTube can swap video elements)
+        if (!this.video || !document.contains(this.video)) {
+          this.video = document.querySelector('video');
+          if (!this.video) return;
+        }
+
+        // Wait until the video has actually started playing before showing captions.
+        // This prevents the opening line from appearing and getting stuck while
+        // the video is still loading or showing an ad.
+        if (!hasPlayed) {
+          if (this.video.paused || this.video.readyState < 3 || this.video.currentTime < 0.5) return;
+          hasPlayed = true;
+        }
+
         const t = this.video.currentTime;
         const idx = this._findCaption(t, lastIdx);
         if (idx !== -1 && idx !== lastIdx) {
           lastIdx = idx;
+          lastIdxTime = Date.now();
           this._lastCaptionShownAt = Date.now(); // Stamp watchdog
           const text = this.captionTrack[idx].text;
           if (needsTranslation) {
@@ -1300,6 +1538,22 @@
         } else if (idx === -1 && lastIdx !== -1) {
           lastIdx = -1;
           this.overlay.hide();
+        } else if (idx !== -1 && idx === lastIdx && !this.video.paused) {
+          // Same caption for too long while video plays — likely stuck on a
+          // degenerate track. Fully invalidate and re-request captions.
+          const stuckDur = Date.now() - lastIdxTime;
+          if (stuckDur > 15000) {
+            // Clear the bad caption track entirely so fresh data loads
+            if (this.syncInterval) clearInterval(this.syncInterval);
+            this.syncInterval = null;
+            this.captionTrack = null;
+            this._captionSource = null;
+            this._directASRAttempted = false;
+            this.overlay.hide();
+            // Re-request captions from MAIN world
+            window.postMessage({ type: '__CS_REQUEST_CAPTIONS__' }, window.location.origin);
+            return; // syncInterval is cleared, this callback won't run again
+          }
         }
       }, 200);
     }
@@ -1538,8 +1792,9 @@
       // Show translated title immediately
       this._showPauseTitle();
 
-      // Start scroll/click/observer for comments
+      // Start scroll/hover/click/observer for comments
       this._startPauseScroll();
+      this._startPauseHover();
       this._startPauseClick();
       this._startPauseCommentObserver();
     }
@@ -1551,6 +1806,7 @@
       this._pauseLastText = '';
 
       this._stopPauseScroll();
+      this._stopPauseHover();
       this._stopPauseClick();
       this._stopPauseCommentObserver();
 
@@ -1650,6 +1906,42 @@
       }
       clearTimeout(this._pauseScrollTimer);
       this._pauseScrollTimer = null;
+    }
+
+    _startPauseHover() {
+      this._pauseHoverHandler = (e) => {
+        if (!this._paused || !this.active) return;
+        if (this._pauseClickLocked) return;
+
+        // Walk up from hovered element to find a comment
+        let el = e.target;
+        while (el && el !== document.body) {
+          // Skip our own overlay
+          if (el.id === 'ss-overlay' || el.id === 'ss-translation' || el.id === 'ss-original') return;
+
+          const commentParent = el.closest('ytd-comment-renderer');
+          if (commentParent) {
+            const contentEl = commentParent.querySelector('#content-text');
+            const text = contentEl?.textContent?.trim();
+            if (text && text.length >= 5) {
+              const cleaned = text.substring(0, 300);
+              if (cleaned === this._pauseLastText) return; // Already showing
+              this._pauseLastText = cleaned;
+              this._translateAndShowPause(cleaned);
+            }
+            return;
+          }
+          el = el.parentElement;
+        }
+      };
+      document.addEventListener('mouseover', this._pauseHoverHandler, true);
+    }
+
+    _stopPauseHover() {
+      if (this._pauseHoverHandler) {
+        document.removeEventListener('mouseover', this._pauseHoverHandler, true);
+        this._pauseHoverHandler = null;
+      }
     }
 
     _startPauseClick() {
@@ -1901,12 +2193,32 @@
 
     async start() {
       await this._loadSettings();
+
+      // Always listen for settings changes (even when disabled) so that
+      // toggling the extension on works immediately without a page reload.
+      this._listenSettings();
+
       if (!this.settings.enabled) return;
 
-      this.overlay = new SubtitleOverlay();
-      this.overlay._onClose = () => this._onCloseOverlay();
-      this.translator = new TranslationService();
-      this.extractor = new TextExtractor();
+      this._boot();
+    }
+
+    // Create overlay/translator/extractor and start subtitle extraction.
+    // Called once on first enable (initial load or toggled on from popup).
+    _boot() {
+      if (!this.overlay) {
+        this.overlay = new SubtitleOverlay();
+        this.overlay._onClose = () => this._onCloseOverlay();
+        this.overlay._onCollapseChange = (collapsed) => {
+          if (!collapsed) {
+            // Re-trigger subtitle extraction immediately on expand
+            this.lastText = '';
+            this._showBest();
+          }
+        };
+      }
+      if (!this.translator) this.translator = new TranslationService();
+      if (!this.extractor) this.extractor = new TextExtractor();
       this.overlay.updateSettings(this.settings);
 
       if (this._isYTWatch()) {
@@ -1914,8 +2226,6 @@
       } else {
         this._initPage();
       }
-
-      this._listenSettings();
     }
 
     _isYTWatch() {
@@ -1938,6 +2248,11 @@
       this.ytHandler = new YouTubeHandler(this.overlay, this.translator, this.settings);
       this.ytHandler.init();
       this.ytHandler.handleFullscreen();
+
+      // Scroll handler for watch pages — shows comments/sidebar when player is out of view
+      if (this._ytPageScrollHandler) window.removeEventListener('scroll', this._ytPageScrollHandler);
+      this._ytPageScrollHandler = () => this._onYTPageScroll();
+      window.addEventListener('scroll', this._ytPageScrollHandler, { passive: true });
 
       this._lastYTUrl = location.href;
 
@@ -1968,6 +2283,7 @@
       this._clickLocked = false;
       this._hoverLocked = false;
       this._clearHighlight();
+      this.lastText = '';
 
       setTimeout(() => {
         this.overlay?._syncBg();
@@ -1982,6 +2298,32 @@
       }, 1500);
     }
 
+    _onYTPageScroll() {
+      // Only for watch pages — shows comments/sidebar when player is out of view
+      if (!this._isYTWatch()) return;
+      if (this._clickLocked) return;
+
+      // If video is playing and player is visible, let captions handle it
+      const player = document.getElementById('movie_player');
+      if (player) {
+        const rect = player.getBoundingClientRect();
+        // If player bottom is above viewport 30% mark, user has scrolled past it
+        if (rect.bottom > window.innerHeight * 0.3) return;
+      }
+
+      // Player is mostly out of view — show best comment/sidebar/description
+      this._hoverLocked = false;
+      if (!this._ytScrolling) {
+        this._ytScrolling = true;
+        this._showBest();
+      }
+      clearTimeout(this._ytScrollTimer);
+      this._ytScrollTimer = setTimeout(() => {
+        this._ytScrolling = false;
+        this._showBest();
+      }, 150);
+    }
+
     _stopYouTube() {
       this.ytHandler?.destroy();
       this.ytHandler = null;
@@ -1993,6 +2335,11 @@
         clearInterval(this._ytUrlCheck);
         this._ytUrlCheck = null;
       }
+      if (this._ytPageScrollHandler) {
+        window.removeEventListener('scroll', this._ytPageScrollHandler);
+        this._ytPageScrollHandler = null;
+      }
+      clearTimeout(this._ytScrollTimer);
       this._ytNavDebounce = false;
     }
 
@@ -2028,6 +2375,7 @@
         this._clickLocked = false;
         this._hoverLocked = false;
         clearTimeout(this._hoverTimer);
+        this.overlay?.hide();
         this.overlay?.hideCloseBtn();
         this._clearHighlight();
         this.lastText = '';
@@ -2084,9 +2432,9 @@
 
     // Get visible text from element, excluding hidden/invisible/non-content nodes
     _getVisibleText(el) {
-      // Always use the walk method to skip non-visible content.
-      // Facebook and other sites insert obfuscated text in aria-hidden spans,
-      // 0-height divs, and other invisible containers.
+      // Walk the DOM to collect text, skipping non-visible/non-content nodes.
+      // Avoids expensive getComputedStyle on every node — uses fast checks first,
+      // only falling back to computed style for elements that look suspicious.
       let text = '';
       const walk = (node) => {
         if (node.nodeType === 3) { text += node.textContent; return; }
@@ -2097,24 +2445,41 @@
             tag === 'template' || tag === 'svg') return;
         // Skip aria-hidden elements (screen reader text, obfuscated anti-scrape decorations)
         if (node.getAttribute('aria-hidden') === 'true') return;
-        // Skip explicitly hidden elements (display:none, visibility:hidden, 0-size)
-        // Use offsetParent check first (fast), then fall back to computed style
-        if (node !== el && tag !== 'span' && tag !== 'br' && tag !== 'wbr') {
-          // Block-level elements: check offsetParent (null = hidden via display:none or similar)
-          if (node.offsetParent === null && node.offsetHeight === 0 && node.offsetWidth === 0) {
-            // Double-check: position:fixed elements have null offsetParent but are visible
-            const s = node.style;
-            if (s && (s.display === 'none' || s.visibility === 'hidden')) return;
-            // getComputedStyle as last resort for truly hidden elements
-            try {
-              const cs = getComputedStyle(node);
-              if (cs.display === 'none' || cs.visibility === 'hidden') return;
-            } catch {}
+
+        if (node !== el) {
+          // Fast check: inline style patterns for hiding (Facebook anti-scrape, etc.)
+          const inlineStyle = node.getAttribute('style') || '';
+          if (/display\s*:\s*none|visibility\s*:\s*hidden|font-size\s*:\s*0/i.test(inlineStyle)) return;
+          // Overflow hidden + 0-height inline style (obfuscated containers)
+          if (/overflow\s*:\s*hidden/i.test(inlineStyle) && /height\s*:\s*0/i.test(inlineStyle)) return;
+
+          // Fast check: zero-size elements with no offset (hidden via display:none etc.)
+          if (tag !== 'span' && tag !== 'br' && tag !== 'wbr' && tag !== 'a') {
+            if (node.offsetParent === null && node.offsetHeight === 0 && node.offsetWidth === 0) {
+              const s = node.style;
+              if (s && (s.display === 'none' || s.visibility === 'hidden')) return;
+              // getComputedStyle only for zero-size block elements (likely truly hidden)
+              try {
+                const cs = getComputedStyle(node);
+                if (cs.display === 'none' || cs.visibility === 'hidden') return;
+              } catch {}
+            }
+          }
+
+          // Screen-reader-only detection: only check elements that have sr-only class hints
+          // or are positioned absolute/fixed with suspicious inline styles
+          const cls = typeof node.className === 'string' ? node.className : '';
+          if (cls && /\b(sr-only|visually-hidden|screen-reader|clip-hide|a11y-hidden|assistive-text)\b/i.test(cls)) {
+            return; // Known sr-only class names — skip
+          }
+          // Check for sr-only inline patterns: position:absolute + clip or tiny dimensions
+          if (/position\s*:\s*(absolute|fixed)/i.test(inlineStyle)) {
+            if (/clip\s*:/i.test(inlineStyle) || /clip-path\s*:/i.test(inlineStyle)) return;
+            if (/width\s*:\s*1px/i.test(inlineStyle) && /height\s*:\s*1px/i.test(inlineStyle)) return;
+            if (/left\s*:\s*-\d{4,}/i.test(inlineStyle) || /top\s*:\s*-\d{4,}/i.test(inlineStyle)) return;
           }
         }
-        // Skip spans/elements with explicit inline hiding (Facebook anti-scrape uses these)
-        const inlineStyle = node.getAttribute('style') || '';
-        if (/display\s*:\s*none|visibility\s*:\s*hidden|font-size\s*:\s*0|overflow\s*:\s*hidden.*height\s*:\s*0|height\s*:\s*0.*overflow\s*:\s*hidden/i.test(inlineStyle)) return;
+
         for (const child of node.childNodes) walk(child);
       };
       walk(el);
@@ -2352,7 +2717,7 @@
     // ---- Shared: extract text from an element, drilling down for specificity ----
     _smartExtract(el, x, y, lenient = false) {
       // Reddit: if inside a shreddit-comment, extract that specific comment's content
-      // Return full text (up to 1500 chars) — visual truncation handled by chevron UI
+      // Return full text (up to 1500 chars) — visual truncation handled by "see more" UI
       const rc = el.closest?.('shreddit-comment');
       if (rc) {
         // :scope > ensures we get THIS comment's content, not a nested reply's
@@ -2371,7 +2736,7 @@
       }
 
       // Reddit feed: if on/inside a shreddit-post, extract post title or body
-      // Return full text (up to 1500 chars) — visual truncation handled by chevron UI
+      // Return full text (up to 1500 chars) — visual truncation handled by "see more" UI
       const rp = el.closest?.('shreddit-post') ||
                  (el.tagName?.toLowerCase() === 'shreddit-post' ? el : null);
       if (rp && !rc) {
@@ -2405,6 +2770,11 @@
       // (e.g. hovering "Cats" link on Google picking up the breadcrumb below it).
       const tag = el.tagName?.toLowerCase();
       if (tag === 'a' || tag === 'h1' || tag === 'h2' || tag === 'h3' || tag === 'h4' || tag === 'h5' || tag === 'h6') {
+        // Skip links/headings inside page-level nav/header (not article-level)
+        if (!lenient) {
+          const navParent = el.closest('nav, header, footer');
+          if (navParent && !navParent.closest('article, main, [role="main"], shreddit-post, shreddit-comment')) return null;
+        }
         const linkText = this._getVisibleText(el);
         if (linkText && linkText.length >= 2 && /[a-zA-Z]{2,}/.test(linkText) && !this._looksLikeCode(linkText)) {
           const cleaned = this._cleanExtractedText(linkText);
@@ -2457,6 +2827,41 @@
       return { targetEl, cleaned };
     }
 
+    // Check if the clicked element is interactive (button, link, tab, etc.)
+    // Walks from the click target up to the text source, checking each ancestor.
+    _isInteractiveEl(clickTarget, textSourceEl) {
+      let node = clickTarget;
+      for (let d = 0; node && d < 8; d++) {
+        const tag = node.tagName?.toLowerCase();
+        // Native interactive elements
+        if (tag === 'a' || tag === 'button' || tag === 'select' ||
+            tag === 'input' || tag === 'textarea' || tag === 'label' ||
+            tag === 'summary' || tag === 'details' || tag === 'option') return true;
+        // ARIA interactive roles
+        const role = node.getAttribute?.('role');
+        if (role === 'button' || role === 'tab' || role === 'link' ||
+            role === 'menuitem' || role === 'option' || role === 'switch' ||
+            role === 'checkbox' || role === 'radio' || role === 'combobox' ||
+            role === 'listbox' || role === 'searchbox' || role === 'textbox' ||
+            role === 'spinbutton' || role === 'slider' || role === 'gridcell') return true;
+        // Contenteditable (text inputs)
+        if (node.isContentEditable) return true;
+        // Elements with tabindex or onclick are interactive
+        if (node.hasAttribute?.('tabindex') || node.hasAttribute?.('onclick')) return true;
+        // Cursor:pointer is a strong signal of clickability
+        try {
+          if (node.nodeType === 1) {
+            const cs = window.getComputedStyle(node);
+            if (cs.cursor === 'pointer') return true;
+          }
+        } catch {}
+        // Stop walking once we reach the text source element
+        if (node === textSourceEl) break;
+        node = node.parentElement;
+      }
+      return false;
+    }
+
     // ---- Close overlay (dismiss click-lock) ----
     _onCloseOverlay() {
       this._clickLocked = false;
@@ -2471,6 +2876,8 @@
     // ---- Click to translate (highest priority — overrides hover and auto) ----
     _onClick(e) {
       if (this._isYTWatch()) return;
+      // When collapsed, subtitles are disabled — ignore all clicks
+      if (this.overlay?._collapsed) return;
 
       // Click always overrides hover
       this._hoverLocked = false;
@@ -2483,16 +2890,27 @@
         // Skip our own overlay elements
         if (el.id === 'ss-overlay' || el.id === 'ss-translation' || el.id === 'ss-original' ||
             el.id === 'ss-tts-btn' || el.id === 'ss-tts-row' ||
-            el.id === 'ss-chevron-btn' || el.id === 'ss-close-btn') return;
+            el.id === 'ss-see-more-btn' || el.id === 'ss-close-btn' ||
+            el.id === 'ss-collapse-btn') return;
 
         const result = this._smartExtract(el, e.clientX, e.clientY);
         if (result) {
-          if (result.cleaned === this.lastText) return;
-          this.lastText = result.cleaned;
-          this._clickLocked = true;
-          this._highlightElement(result.targetEl);
-          this.overlay.showCloseBtn(result.targetEl);
-          this._translateText(result.cleaned);
+          // Check if the clicked element is interactive (button, link, tab, etc.)
+          // If so, translate the text but don't lock or show the close button
+          const interactive = this._isInteractiveEl(e.target, result.targetEl);
+          // Only lock and show (x) for long static text (paragraphs, descriptions).
+          // Short text or interactive elements just translate without locking.
+          const isLongStatic = !interactive && result.cleaned.length >= 40;
+          if (isLongStatic) {
+            // Long static text — lock and show close button
+            this._clickLocked = true;
+            this._highlightElement(result.targetEl);
+            this.overlay.showCloseBtn(result.targetEl);
+          }
+          if (result.cleaned !== this.lastText) {
+            this.lastText = result.cleaned;
+            this._translateText(result.cleaned);
+          }
           return;
         }
         el = el.parentElement;
@@ -2511,9 +2929,31 @@
     // Hover does NOT override click-lock: if text is locked, hover is ignored
     _onHover(e) {
       if (this._isYTWatch()) return;
+      // When collapsed, subtitles are disabled — ignore hovers
+      if (this.overlay?._collapsed) return;
 
       // If text is click-locked, ignore hover — user must dismiss lock first
       if (this._clickLocked) return;
+
+      // Early exclusion: if the hover target is directly inside a page-level
+      // header/nav/footer (not article-level), skip to avoid screen-reader text.
+      // Only check up to 5 ancestors to avoid being too aggressive on content.
+      {
+        let n = e.target, d = 0;
+        while (n && n !== document.body && d < 5) {
+          const t = n.tagName?.toLowerCase();
+          if (t === 'header' || t === 'nav' || t === 'footer') {
+            // Allow if inside an article or main (content area, not page chrome)
+            if (!n.closest('article, main, [role="main"], shreddit-post, shreddit-comment')) {
+              this._hoverLocked = false;
+              return;
+            }
+            break; // Inside content — allow
+          }
+          n = n.parentElement;
+          d++;
+        }
+      }
 
       // Immediately block _showBest() so in-flight auto-translations don't
       // overwrite the hover result (the debounced callback sets it more permanently)
@@ -2531,7 +2971,8 @@
           // Skip our own overlay elements
           if (el.id === 'ss-overlay' || el.id === 'ss-translation' || el.id === 'ss-original' ||
               el.id === 'ss-tts-btn' || el.id === 'ss-tts-row' ||
-              el.id === 'ss-chevron-btn' || el.id === 'ss-close-btn') return;
+              el.id === 'ss-see-more-btn' || el.id === 'ss-close-btn' ||
+              el.id === 'ss-collapse-btn') return;
 
           const result = this._smartExtract(el, e.clientX, e.clientY);
           if (result) {
@@ -2553,7 +2994,8 @@
         while (el && el !== document.body && depth < 4) {
           if (el.id === 'ss-overlay' || el.id === 'ss-translation' || el.id === 'ss-original' ||
               el.id === 'ss-tts-btn' || el.id === 'ss-tts-row' ||
-              el.id === 'ss-chevron-btn' || el.id === 'ss-close-btn') return;
+              el.id === 'ss-see-more-btn' || el.id === 'ss-close-btn' ||
+              el.id === 'ss-collapse-btn') return;
           const result = this._smartExtract(el, e.clientX, e.clientY, true);
           if (result) {
             if (result.cleaned === this.lastText) return;
@@ -2619,6 +3061,7 @@
     // ---- Extract and show best visible text ----
     async _showBest() {
       if (this._clickLocked || this._hoverLocked) return; // Don't override user interaction
+      if (this.overlay?._collapsed) return; // Subtitles disabled while collapsed
       const result = this.extractor.extractSingle();
       if (!result || result.text === this.lastText) return;
       this.lastText = result.text;
@@ -2647,7 +3090,7 @@
         this._prevOutline = el.style.outline;
         this._prevOutlineOffset = el.style.outlineOffset;
         this._prevBorderRadius = el.style.borderRadius;
-        el.style.outline = '1px solid #F3F378';
+        el.style.outline = '1px solid #F1D871';
         el.style.outlineOffset = '2px';
         el.style.borderRadius = '2px';
         this._highlightedEl = el;
@@ -2697,8 +3140,7 @@
 
         // Turned on from off
         if (!wasOn) {
-          if (this._isYTWatch()) this._initYouTube();
-          else this._initPage();
+          this._boot();
           return;
         }
 

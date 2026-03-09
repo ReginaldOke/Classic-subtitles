@@ -66,15 +66,31 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case 'tts-speak':
       try {
         chrome.tts.stop();
-        chrome.tts.speak(message.text, {
-          lang: message.lang || 'es',
-          rate: message.rate || 0.9,
-          volume: 1.0,
-          enqueue: false,
-        }, () => {
-          if (chrome.runtime.lastError) {
-            console.warn('[CS Background] TTS error:', chrome.runtime.lastError.message);
+        const lang = message.lang || 'es';
+        // Find a female voice for the target language
+        chrome.tts.getVoices((voices) => {
+          const opts = {
+            lang: lang,
+            rate: message.rate || 0.9,
+            volume: 1.0,
+            enqueue: false,
+          };
+          if (voices && voices.length) {
+            const matches = voices.filter(v => v.lang && v.lang.startsWith(lang));
+            // Prefer female-sounding voice names
+            const femaleRx = /\b(female|helena|sabina|paulina|monica|lucia|elvira|conchita|penelope|lupe|mia|ines|francisca|carmen|zira|hazel|susan|samantha|fiona|google)\b/i;
+            const maleRx = /\b(male|jorge|pablo|andres|enrique|diego|carlos|david|daniel|james|mark|richard)\b/i;
+            // First try: explicit female name match
+            let pick = matches.find(v => femaleRx.test(v.voiceName));
+            // Second try: any match that isn't explicitly male
+            if (!pick && matches.length) pick = matches.find(v => !maleRx.test(v.voiceName)) || matches[0];
+            if (pick) opts.voiceName = pick.voiceName;
           }
+          chrome.tts.speak(message.text, opts, () => {
+            if (chrome.runtime.lastError) {
+              console.warn('[CS Background] TTS error:', chrome.runtime.lastError.message);
+            }
+          });
         });
       } catch (err) {
         console.warn('[CS Background] TTS error:', err);
@@ -314,7 +330,7 @@ async function updateIcon(enabled) {
 
       ctx.beginPath();
       ctx.arc(cx, cy, dotR, 0, Math.PI * 2);
-      ctx.fillStyle = enabled ? '#F3F378' : '#7D7D7D';
+      ctx.fillStyle = enabled ? '#F1D871' : '#7D7D7D';
       ctx.fill();
       ctx.strokeStyle = '#000000';
       ctx.lineWidth = 0.8 * s;

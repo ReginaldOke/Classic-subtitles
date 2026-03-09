@@ -18,7 +18,7 @@
   flex-direction: column;
   justify-content: flex-end;
   align-items: center;
-  padding: 48px 16px 24px;
+  padding: 24px 16px 24px;
   gap: 4px;
   z-index: 2147483647;
   pointer-events: none;
@@ -72,10 +72,9 @@
   font-size: 24px;
   line-height: 29px;
   text-align: center;
-  color: #F3F378;
-  -webkit-text-stroke: 1px #000000;
+  color: #F1D871;
+  -webkit-text-stroke: 1.8px #000000;
   paint-order: stroke fill;
-  text-shadow: 0 0 2px rgba(0,0,0,0.9), 0 0 4px rgba(0,0,0,0.5);
   flex: 1 1 auto;
   min-width: 0;
   position: relative;
@@ -93,19 +92,18 @@
 /* TTS mute/unmute button */
 #ss-tts-btn {
   flex: 0 0 auto;
-  width: 28px;
-  height: 28px;
+  width: 36px;
+  height: 36px;
   padding: 4px !important;
   background: none !important;
   border: none !important;
   cursor: pointer;
   pointer-events: auto;
-  color: #F3F378;
+  color: #F1D871;
   opacity: 0.7;
   transition: opacity 0.2s ease, transform 0.15s ease;
   font-style: normal !important;
   -webkit-text-stroke: 0 !important;
-  filter: drop-shadow(0px 0px 1px #000) drop-shadow(0px 0px 1px #000);
 }
 
 #ss-tts-btn:hover {
@@ -123,44 +121,53 @@
   display: block;
 }
 
-/* Expand/collapse chevron — inside #ss-translation at bottom-right */
-#ss-chevron-btn {
+/* "see more" / "see less" link — positioned at bottom-right of translation when collapsed */
+#ss-see-more-btn {
+  display: none;
   position: absolute;
   bottom: 0;
   right: 0;
-  padding: 0 4px 0 24px !important;
-  background: linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.7) 30%) !important;
+  /* Background gradient set dynamically by JS (_syncSeeMoreBg) for dark/light adaptation */
+  background: linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.7) 30%);
   border: none !important;
   cursor: pointer;
   pointer-events: auto;
-  color: #F3F378;
-  opacity: 0.85;
-  font-size: 14px;
-  line-height: 29px; /* Match translation line-height */
-  text-align: right;
-  white-space: nowrap;
-  font-style: normal !important;
+  color: #F1D871;
+  font-family: 'Helvetica Neue', Helvetica, 'Inter', Arial, sans-serif !important;
+  font-style: italic !important;
+  font-weight: 700;
+  font-size: inherit;
+  line-height: inherit;
+  text-decoration: underline !important;
+  text-decoration-color: #F1D871 !important;
+  text-decoration-thickness: 2px !important;
+  text-underline-offset: 4px;
   -webkit-text-stroke: 0 !important;
-  filter: drop-shadow(0px 0px 1px #000) drop-shadow(0px 0px 1px #000);
+  paint-order: stroke fill;
+  white-space: nowrap;
+  padding: 0 4px 0 24px !important;
+  margin: 0;
   transition: opacity 0.2s ease;
+  opacity: 0.9;
+  filter: drop-shadow(0px 0px 1px #000) drop-shadow(0px 0px 1px #000) drop-shadow(0px 0px 1px #000);
 }
 
-#ss-chevron-btn:hover {
+#ss-see-more-btn:hover {
   opacity: 1;
 }
 
-/* When expanded, chevron sits at end of text flow (not absolute) */
-#ss-translation.ss-expanded #ss-chevron-btn {
+/* When expanded, "see less" sits inline at end of text flow */
+#ss-translation.ss-expanded #ss-see-more-btn {
   position: static;
   display: inline !important;
-  padding: 0 0 0 6px !important;
+  padding: 0 0 0 8px !important;
   background: none !important;
 }
 
-/* Close button — fixed on page, inside top-right corner of highlight box */
+/* Close button — absolute on page, anchored to highlighted text (scrolls with it) */
 /* Background color set dynamically by JS (dark/light adaptive) */
 #ss-close-btn {
-  position: fixed;
+  position: absolute;
   width: 18px;
   height: 18px;
   padding: 0 !important;
@@ -169,7 +176,7 @@
   border-radius: 50%;
   cursor: pointer;
   pointer-events: auto;
-  color: #F3F378;
+  color: #F1D871;
   font-size: 11px;
   line-height: 18px;
   text-align: center;
@@ -189,6 +196,85 @@
   transform: scale(0.95);
 }
 
+/* Collapse/expand chevron — inline in tts-row, to the right of text + TTS */
+#ss-collapse-btn {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0 !important;
+  background: none !important;
+  border: 1px solid transparent !important;
+  border-radius: 8px;
+  cursor: pointer;
+  pointer-events: auto;
+  color: #F1D871;
+  opacity: 0.7;
+  font-style: normal !important;
+  -webkit-text-stroke: 0 !important;
+  transition: opacity 0.2s ease, background 0.3s ease, border-color 0.3s ease;
+}
+
+#ss-collapse-btn:hover {
+  opacity: 1;
+}
+
+#ss-collapse-btn svg {
+  width: 100%;
+  height: 100%;
+  flex-shrink: 0;
+  transition: transform 0.3s ease;
+}
+
+/* ---- Collapsed state: hide text, show only the chevron pill at bottom-right ---- */
+#ss-overlay.ss-collapsed {
+  min-height: 0 !important;
+  height: 0;
+  max-height: 0;
+  padding: 0;
+  gap: 0;
+  background: none !important;
+  overflow: visible;
+}
+
+#ss-overlay.ss-collapsed #ss-translation,
+#ss-overlay.ss-collapsed #ss-tts-btn,
+#ss-overlay.ss-collapsed #ss-original {
+  display: none !important;
+}
+
+/* In collapsed state, the row just holds the fixed chevron */
+#ss-overlay.ss-collapsed #ss-tts-row {
+  gap: 0;
+  width: 0;
+  height: 0;
+  overflow: visible;
+}
+
+/* In collapsed state, the button becomes fixed at bottom-right of viewport */
+#ss-overlay.ss-collapsed #ss-collapse-btn {
+  position: fixed;
+  top: auto;
+  bottom: 16px;
+  right: 16px;
+  left: auto;
+  /* background set dynamically by JS (_syncCollapseBg) */
+  background: rgba(0, 0, 0, 0.6) !important;
+  border: 2px solid #F1D871 !important;
+  border-radius: 10px;
+  opacity: 1;
+  width: 44px;
+  height: 44px;
+  filter: drop-shadow(0px 2px 6px rgba(0,0,0,0.4));
+}
+
+/* Rotate the chevron 180° when collapsed (points up) */
+#ss-overlay.ss-collapsed #ss-collapse-btn svg {
+  transform: rotate(180deg);
+}
+
 /* ---- Fullscreen support ---- */
 :fullscreen #ss-overlay,
 :-webkit-full-screen #ss-overlay {
@@ -201,18 +287,16 @@
 /* Thicker stroke in fullscreen for contrast against bright video scenes */
 :fullscreen #ss-translation,
 :-webkit-full-screen #ss-translation {
-  -webkit-text-stroke: 1.5px #000000 !important;
-  text-shadow: 0 0 4px rgba(0,0,0,0.8), 0 0 8px rgba(0,0,0,0.5);
+  -webkit-text-stroke: 2.7px #000000 !important;
 }
 
 :fullscreen #ss-original,
 :-webkit-full-screen #ss-original {
   -webkit-text-stroke: 0.8px #000000 !important;
-  text-shadow: 0 0 3px rgba(0,0,0,0.8), 0 0 6px rgba(0,0,0,0.5);
 }
 
-:fullscreen #ss-chevron-btn,
-:-webkit-full-screen #ss-chevron-btn {
+:fullscreen #ss-see-more-btn,
+:-webkit-full-screen #ss-see-more-btn {
   filter: drop-shadow(0px 0px 2px #000) drop-shadow(0px 0px 2px #000);
 }
 
@@ -220,7 +304,7 @@
 @media (max-width: 768px) {
   #ss-overlay {
     min-height: 60px;
-    padding: 40px 12px 16px;
+    padding: 24px 12px 16px;
   }
 
   #ss-translation {
@@ -233,17 +317,12 @@
   }
 
   #ss-tts-btn {
-    width: 22px;
-    height: 22px;
+    width: 28px;
+    height: 28px;
   }
 
   #ss-translation {
     max-height: calc(3 * 22px);
-  }
-
-  #ss-chevron-btn {
-    font-size: 12px;
-    line-height: 22px;
   }
 
   #ss-close-btn {
@@ -252,12 +331,17 @@
     font-size: 9px;
     line-height: 16px;
   }
+
+  #ss-collapse-btn {
+    width: 28px;
+    height: 28px;
+  }
 }
 
 @media (max-width: 480px) {
   #ss-overlay {
     min-height: 50px;
-    padding: 36px 10px 12px;
+    padding: 20px 10px 12px;
   }
 
   #ss-translation {
@@ -266,17 +350,12 @@
   }
 
   #ss-tts-btn {
-    width: 20px;
-    height: 20px;
+    width: 24px;
+    height: 24px;
   }
 
   #ss-translation {
     max-height: calc(3 * 19px);
-  }
-
-  #ss-chevron-btn {
-    font-size: 11px;
-    line-height: 19px;
   }
 
   #ss-close-btn {
@@ -284,6 +363,11 @@
     height: 14px;
     font-size: 8px;
     line-height: 14px;
+  }
+
+  #ss-collapse-btn {
+    width: 24px;
+    height: 24px;
   }
 }
 
@@ -293,13 +377,13 @@
 #ss-translation,
 #ss-original,
 #ss-tts-btn,
-#ss-chevron-btn,
-#ss-close-btn {
+#ss-see-more-btn,
+#ss-close-btn,
+#ss-collapse-btn {
   box-sizing: border-box;
   margin: 0;
   border: none;
   outline: none;
-  text-decoration: none;
   text-transform: none;
   list-style: none;
   background: none;
@@ -313,8 +397,9 @@
 #ss-translation,
 #ss-original,
 #ss-tts-btn,
-#ss-chevron-btn,
-#ss-close-btn {
+#ss-see-more-btn,
+#ss-close-btn,
+#ss-collapse-btn {
   padding: 0;
 }
 
@@ -323,9 +408,18 @@
   background: none !important;
 }
 
+/* Ensure see-more keeps its underline after reset */
+#ss-see-more-btn {
+  text-decoration: underline !important;
+  text-decoration-color: #F1D871 !important;
+  text-decoration-thickness: 2px !important;
+  text-underline-offset: 4px !important;
+  -webkit-text-stroke: 0 !important;
+}
+
 /* ---- Highlight mode: outline around source text being translated ---- */
 .ss-highlighted {
-  outline: 1px solid #F3F378 !important;
+  outline: 1px solid #F1D871 !important;
   outline-offset: 2px;
   border-radius: 2px;
 }
