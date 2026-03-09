@@ -334,17 +334,19 @@
 
     // YouTube non-watch pages (homepage, search, channels) — extract video titles only
     _youtube() {
-      // Target video titles in feeds/search — these are the content the user is browsing
+      // Use the 'title' attribute on #video-title elements — it contains only the
+      // clean title text, unlike textContent which can include player overlay controls
+      // (Tap to unmute, 2x, Search, Share, etc.) from video preview hover.
       const result = this._bestVisible([
         'ytd-rich-item-renderer #video-title',        // Homepage grid
         'ytd-video-renderer #video-title',             // Search results
         'ytd-compact-video-renderer #video-title',     // Sidebar recommendations
         'ytd-grid-video-renderer #video-title',        // Channel video grid
         'ytd-playlist-video-renderer #video-title',    // Playlist items
-      ]);
+      ], 'title');
       if (result) return result;
       // Fallback: any visible video title or channel name
-      return this._bestVisible(['#video-title', '#channel-name', '#text.ytd-channel-name']);
+      return this._bestVisible(['#video-title', '#channel-name', '#text.ytd-channel-name'], 'title');
     }
 
     _reddit() {
@@ -429,21 +431,38 @@
     _twitter() { return this._bestVisible(['[data-testid="tweetText"]']); }
 
     _instagram() {
-      // On post detail pages — prioritize individual comments/captions in the list
-      const isPost = window.location.pathname.startsWith('/p/') ||
-                     window.location.pathname.startsWith('/reel/') ||
+      const path = window.location.pathname;
+
+      // Stories — only show text captions/stickers ON the story itself, never UI chrome
+      if (path.startsWith('/stories/')) {
+        // Story text overlays are positioned absolute on the story media
+        // These are user-added captions, questions, polls etc.
+        return this._bestVisible([
+          '[class*="StoryText"] span',                         // Story text sticker
+          '[style*="position: absolute"] span[dir="auto"]',    // Positioned text overlay
+        ]);
+      }
+
+      // Post detail pages — individual comments/captions
+      const isPost = path.startsWith('/p/') ||
+                     path.startsWith('/reel/') ||
                      document.querySelector('[role="dialog"] article');
 
       if (isPost) {
-        // Try individual comment/caption text within list items.
-        // Each comment has its own li with a span[dir="auto"] containing just that comment's text.
-        // _bestVisible picks the one closest to viewport center, so scrolling naturally shifts focus.
         const comment = this._bestVisible([
-          'ul li[role="menuitem"] span[dir="auto"]',        // Comment items with role
-          'ul > div > li span[dir="auto"]',                  // Comments in standard list structure
-          'ul > li span[dir="auto"]',                        // Fallback: any list item span
+          'ul li[role="menuitem"] span[dir="auto"]',
+          'ul > div > li span[dir="auto"]',
+          'ul > li span[dir="auto"]',
         ]);
         if (comment) return comment;
+      }
+
+      // Profile pages — individual text elements (name, bio), not the whole header
+      if (/^\/[^/]+\/?$/.test(path) && !path.startsWith('/p/')) {
+        return this._bestVisible([
+          'header section span[dir="auto"]',   // Bio text
+          'header h2',                          // Display name
+        ]);
       }
 
       // Feed page or fallback: post captions
@@ -461,12 +480,15 @@
       return this._bestVisible(['article p', 'main p', 'p']);
     }
 
-    _bestVisible(selectors) {
+    _bestVisible(selectors, preferAttr) {
       let best = null, bestScore = -Infinity, bestEl = null;
       for (const sel of selectors) {
         try {
           for (const el of document.querySelectorAll(sel)) {
-            const text = el.textContent?.trim();
+            // If preferAttr is given (e.g. 'title'), use that attribute for clean text
+            const text = (preferAttr && el.getAttribute(preferAttr))
+              ? el.getAttribute(preferAttr).trim()
+              : el.textContent?.trim();
             if (!text || text.length < 8 || text.length > 400) continue;
             if (!/[a-zA-Z]{2,}/.test(text)) continue;
             if (this._isExcluded(el)) continue;
@@ -542,13 +564,35 @@
           testId.includes('subreddit-name')
         ) return true;
 
-        // Generic ad/promo attributes
+        // Generic role checks — skip buttons, menus, dialogs, navigation
         const role = node.getAttribute?.('role') || '';
-        if (role === 'dialog' || role === 'alertdialog' || role === 'banner') return true;
+        if (role === 'dialog' || role === 'alertdialog' || role === 'banner' ||
+            role === 'button' || role === 'menu' || role === 'menuitem' ||
+            role === 'menubar' || role === 'toolbar' || role === 'tablist') return true;
+
+        // Skip <button> elements and their children (never translate buttons/actions)
+        if (tag === 'button') return true;
+
+        // Instagram-specific: story UI, reactions, username headers, action bars
+        if (
+          cls.includes('_ac') && cls.includes('story') || // story overlay elements
+          cls.includes('coreSpriteMore') || cls.includes('coreSprite') ||
+          cls.includes('_a9-') || // IG action bar classes
+          tagName === 'time' // timestamps
+        ) return true;
 
         node = node.parentElement;
       }
       return false;
+    }
+
+    // Check if text is mostly usernames/handles (should not be translated)
+    _isMostlyUsernames(text) {
+      if (!text) return false;
+      // Text that is primarily @mentions or handle-like patterns
+      const words = text.split(/\s+/);
+      const handleWords = words.filter(w => /^@?\w[\w.]+$/.test(w) && w.length > 2);
+      return handleWords.length > 0 && handleWords.length >= words.length * 0.5;
     }
 
     _vScore(rect) {
@@ -1419,9 +1463,9 @@
             el.id === 'ss-tts-btn' || el.id === 'ss-tts-row') return;
 
         const text = el.textContent?.trim();
-        if (text && text.length >= 5 && text.length <= 500 && /[a-zA-Z]{2,}/.test(text)) {
-          // Skip excluded elements (ads, nav, promo, etc.)
-          if (this.extractor._isExcluded(el)) {
+        if (text && text.length >= 5 && text.length <= 800 && /[a-zA-Z]{2,}/.test(text)) {
+          // Skip excluded elements, usernames, buttons
+          if (this.extractor._isExcluded(el) || this.extractor._isMostlyUsernames(text)) {
             el = el.parentElement;
             continue;
           }
@@ -1442,16 +1486,13 @@
       this._showBest();
     }
 
-    // ---- Hover to translate (medium priority — overrides auto, yields to click) ----
+    // ---- Hover to translate — works on any page, overrides click lock ----
     _onHover(e) {
       if (this._isYTWatch()) return;
-      if (this._clickLocked) return; // Click takes priority
 
       // Debounce rapid mouseover events
       clearTimeout(this._hoverTimer);
       this._hoverTimer = setTimeout(() => {
-        if (this._clickLocked) return;
-
         // Walk up from hover target to find meaningful text
         let el = e.target;
         let depth = 0;
@@ -1462,8 +1503,8 @@
 
           const text = el.textContent?.trim();
           if (text && text.length >= 5 && text.length <= 500 && /[a-zA-Z]{2,}/.test(text)) {
-            // Skip excluded elements (ads, nav, promo, etc.)
-            if (this.extractor._isExcluded(el)) {
+            // Skip excluded elements, usernames, buttons
+            if (this.extractor._isExcluded(el) || this.extractor._isMostlyUsernames(text)) {
               el = el.parentElement;
               depth++;
               continue;
@@ -1471,6 +1512,7 @@
             const cleaned = text.substring(0, 300);
             if (cleaned === this.lastText) return; // already showing this
             this.lastText = cleaned;
+            this._clickLocked = false; // Hover overrides click lock
             this._hoverLocked = true;
             this._highlightElement(el);
             this._translateText(cleaned);

@@ -258,15 +258,19 @@ async function updateIcon(enabled) {
       const bmp = await createImageBitmap(blob);
       ctx.drawImage(bmp, 0, 0, size, size);
 
-      // Grey out icon when disabled
+      // Grey out icon when disabled — two-tone like the status dot
+      // Dark pixels (letter strokes, outer bg) → black (outline)
+      // Light pixels (gold rect fill) → #7D7D7D grey (matches dot fill)
       if (!enabled) {
         const imgData = ctx.getImageData(0, 0, size, size);
         const d = imgData.data;
         for (let i = 0; i < d.length; i += 4) {
           const g = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114;
-          d[i] = g;
-          d[i + 1] = g;
-          d[i + 2] = g;
+          // Dark pixels (letters, background) → black; light pixels (gold rect) → grey
+          const v = g < 80 ? 0 : 0x7D;
+          d[i] = v;
+          d[i + 1] = v;
+          d[i + 2] = v;
         }
         ctx.putImageData(imgData, 0, 0);
       }

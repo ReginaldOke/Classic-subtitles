@@ -14,6 +14,11 @@
   const _fetch = window.fetch;
   let _captionsTriggered = false;
 
+  // Store intercepted data so it can be re-sent when content script is ready
+  // (the player response often arrives before content.js sets up its listener)
+  let _lastTimedtextUrl = null;
+  let _lastCaptionTracks = null;
+
   // ---- Immediately hide YouTube's native captions ----
   // Inject CSS as early as possible so captions never flash on screen.
   // Our extension replaces them with styled yellow subtitles.
@@ -25,6 +30,7 @@
       const url = typeof args[0] === 'string' ? args[0] : args[0]?.url || '';
       // Capture timedtext URLs — these have valid, fresh POT tokens
       if (url.includes('/api/timedtext') && url.includes('v=')) {
+        _lastTimedtextUrl = url;
         window.postMessage({ type: '__CS_TIMEDTEXT_URL__', url }, window.location.origin);
       }
     } catch {}
@@ -50,14 +56,16 @@
     try {
       const tracks = data?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
       if (!tracks || tracks.length === 0) return;
+      const mapped = tracks.map(t => ({
+        baseUrl: t.baseUrl,
+        languageCode: t.languageCode,
+        kind: t.kind || '',
+        name: t.name?.simpleText || t.name?.runs?.[0]?.text || '',
+      }));
+      _lastCaptionTracks = mapped;
       window.postMessage({
         type: '__CS_CAPTION_TRACKS__',
-        tracks: tracks.map(t => ({
-          baseUrl: t.baseUrl,
-          languageCode: t.languageCode,
-          kind: t.kind || '',
-          name: t.name?.simpleText || t.name?.runs?.[0]?.text || '',
-        })),
+        tracks: mapped,
       }, window.location.origin);
     } catch {}
   }
@@ -129,17 +137,51 @@
   window.addEventListener('message', (event) => {
     if (event.source !== window) return;
     if (event.data?.type === '__CS_REQUEST_CAPTIONS__') {
+      // Re-send any previously intercepted data (handles race condition where
+      // player response arrived before content script was ready)
+      if (_lastTimedtextUrl) {
+        window.postMessage({ type: '__CS_TIMEDTEXT_URL__', url: _lastTimedtextUrl }, window.location.origin);
+      }
+      if (_lastCaptionTracks) {
+        window.postMessage({ type: '__CS_CAPTION_TRACKS__', tracks: _lastCaptionTracks }, window.location.origin);
+      }
+      // Also try player API approach
       if (!_captionsTriggered) {
         waitAndTrigger(0);
       }
     }
   });
 
+  // ---- Extract captions from ytInitialPlayerResponse (available before any fetch) ----
+  function tryInitialPlayerResponse() {
+    try {
+      const data = window.ytInitialPlayerResponse;
+      if (data) _onPlayerResponse(data);
+    } catch {}
+  }
+
+  // ---- Intercept XHR for timedtext URLs (fallback for XMLHttpRequest usage) ----
+  try {
+    const _xhrOpen = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function (method, url, ...rest) {
+      try {
+        const u = typeof url === 'string' ? url : '';
+        if (u.includes('/api/timedtext') && u.includes('v=')) {
+          _lastTimedtextUrl = u;
+          window.postMessage({ type: '__CS_TIMEDTEXT_URL__', url: u }, window.location.origin);
+        }
+      } catch {}
+      return _xhrOpen.call(this, method, url, ...rest);
+    };
+  } catch {}
+
   // ---- Start polling after page loads ----
   if (document.readyState === 'complete' || document.readyState === 'interactive') {
+    tryInitialPlayerResponse();
     setTimeout(() => waitAndTrigger(0), 1000);
   } else {
     window.addEventListener('DOMContentLoaded', () => {
+      tryInitialPlayerResponse();
       setTimeout(() => waitAndTrigger(0), 1000);
     });
   }
@@ -147,6 +189,8 @@
   // ---- Re-trigger on YouTube SPA navigation ----
   document.addEventListener('yt-navigate-finish', () => {
     _captionsTriggered = false;
+    _lastTimedtextUrl = null;
+    _lastCaptionTracks = null;
     // Ensure caption-hiding CSS persists across navigation
     _hideYTCaptions();
     // Wait for new video's player to be ready
