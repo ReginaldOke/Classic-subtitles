@@ -1,0 +1,250 @@
+/* ============================================
+   CLASSIC SUBTITLES - Popup Styles
+   Dark, minimal, Helvetica italic, #F1D871 gold
+   ============================================ */
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  background: #0F0F0F;
+}
+
+body {
+  width: 280px;
+  font-family: 'Helvetica Neue', Helvetica, 'Inter', Arial, sans-serif;
+  font-style: italic;
+  font-weight: 400;
+  font-size: 13px;
+  color: #F1D871;
+  background: #0F0F0F;
+  border-radius: 16px;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+.popup {
+  padding: 20px;
+}
+
+/* ---- Header ---- */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.logo {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  object-fit: contain;
+}
+
+h1 {
+  font-size: 15px;
+  font-weight: 500;
+  font-style: italic;
+  color: #F1D871;
+  letter-spacing: -0.2px;
+}
+
+/* ---- Divider ---- */
+.divider {
+  height: 1px;
+  background: rgba(241, 216, 113, 0.1);
+  margin-bottom: 16px;
+}
+
+/* ---- Settings ---- */
+.settings {
+  transition: opacity 0.3s ease;
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+}
+
+.setting-row label {
+  font-size: 13px;
+  font-style: italic;
+  color: rgba(241, 216, 113, 0.82);
+  flex-shrink: 0;
+}
+
+/* ---- Select ---- */
+.setting-row select {
+  background: rgba(241, 216, 113, 0.06);
+  color: #F1D871;
+  border: 1px solid rgba(241, 216, 113, 0.12);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-family: inherit;
+  font-style: italic;
+  font-size: 12px;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.setting-row select:hover {
+  border-color: rgba(241, 216, 113, 0.3);
+}
+
+.setting-row select:focus {
+  border-color: rgba(241, 216, 113, 0.5);
+}
+
+.setting-row select option {
+  background: #1a1a1a;
+  color: #F1D871;
+}
+
+/* ---- Range Slider ---- */
+.range-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.range-value {
+  font-size: 12px;
+  color: #F1D871;
+  min-width: 36px;
+  text-align: right;
+  font-weight: 500;
+  font-style: italic;
+}
+
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100px;
+  height: 3px;
+  background: rgba(241, 216, 113, 0.12);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  background: #F1D871;
+  border-radius: 50%;
+  cursor: pointer;
+  border: none;
+  box-shadow: 0 0 6px rgba(241, 216, 113, 0.25);
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  background: #F1D871;
+  border-radius: 50%;
+  cursor: pointer;
+  border: none;
+}
+
+/* ---- Toggle Switch ---- */
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.toggle-switch.small {
+  width: 36px;
+  height: 20px;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider {
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 24px;
+  cursor: pointer;
+  transition: background 0.3s;
+}
+
+.slider::before {
+  content: '';
+  position: absolute;
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 50%;
+  transition: transform 0.3s ease, background 0.3s ease;
+}
+
+.toggle-switch.small .slider::before {
+  height: 14px;
+  width: 14px;
+}
+
+input:checked + .slider {
+  background: rgba(241, 216, 113, 0.15);
+}
+
+input:checked + .slider::before {
+  background: #F1D871;
+  transform: translateX(20px);
+  box-shadow: 0 0 8px rgba(241, 216, 113, 0.35);
+}
+
+.toggle-switch.small input:checked + .slider::before {
+  transform: translateX(16px);
+}
+
+/* ---- Status ---- */
+.status {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(241, 216, 113, 0.06);
+  font-size: 11px;
+  font-style: italic;
+  color: rgba(241, 216, 113, 0.5);
+  text-align: center;
+}
+
+.status::before {
+  content: '';
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #F1D871;
+  margin-right: 6px;
+  vertical-align: middle;
+  box-shadow: 0 0 4px rgba(241, 216, 113, 0.5);
+}
+
+.status.paused::before {
+  background: #444;
+  box-shadow: none;
+}

@@ -1,0 +1,182 @@
+/* ============================================
+   SPANISH SUBTITLES - Overlay Styles
+   Full-width gradient overlay with yellow italic text
+   Matches Figma design spec exactly
+   ============================================ */
+
+/* Full-width gradient container pinned to bottom of viewport */
+#ss-overlay {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  width: 100vw;
+  height: 160px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 16px 16px 32px;
+  gap: 4px;
+  z-index: 2147483647;
+  pointer-events: none;
+  /* Background off by default — JS applies gradient when showBackground is on */
+  background: none;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+
+#ss-overlay.ss-visible {
+  opacity: 1;
+}
+
+/* Original text (English) — hidden by default */
+/* Color is set dynamically by JS (_syncOriginalColor) for contrast */
+#ss-original {
+  display: none;
+  font-family: 'Helvetica Neue', Helvetica, 'Inter', Arial, sans-serif;
+  font-style: italic;
+  font-weight: 400;
+  font-size: 16px;
+  line-height: 19px;
+  text-align: center;
+  color: #FFFFFF;
+  -webkit-text-stroke: 0.5px #000000;
+  paint-order: stroke fill;
+}
+
+/* Row wrapper: translation text + TTS button side by side */
+#ss-tts-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+}
+
+/* Translation text (Spanish) — main yellow subtitle */
+#ss-translation {
+  font-family: 'Helvetica Neue', Helvetica, 'Inter', Arial, sans-serif;
+  font-style: italic;
+  font-weight: 500;
+  font-size: 24px;
+  line-height: 29px;
+  text-align: center;
+  color: #F1D871;
+  -webkit-text-stroke: 1px #000000;
+  paint-order: stroke fill;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* TTS mute/unmute button */
+#ss-tts-btn {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  padding: 4px !important;
+  background: none !important;
+  border: none !important;
+  cursor: pointer;
+  pointer-events: auto;
+  color: #F1D871;
+  opacity: 0.7;
+  transition: opacity 0.2s ease, transform 0.15s ease;
+  font-style: normal !important;
+  -webkit-text-stroke: 0 !important;
+  filter: drop-shadow(0px 0px 1px #000) drop-shadow(0px 0px 1px #000);
+}
+
+#ss-tts-btn:hover {
+  opacity: 1;
+  transform: scale(1.15);
+}
+
+#ss-tts-btn:active {
+  transform: scale(0.95);
+}
+
+#ss-tts-btn svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* ---- Fullscreen support ---- */
+:fullscreen #ss-overlay,
+:-webkit-full-screen #ss-overlay {
+  position: fixed;
+  bottom: 0;
+  z-index: 2147483647;
+}
+
+/* ---- Responsive ---- */
+@media (max-width: 768px) {
+  #ss-overlay {
+    height: 120px;
+    padding: 12px;
+  }
+
+  #ss-translation {
+    font-size: 18px;
+    line-height: 22px;
+  }
+
+  #ss-original {
+    font-size: 13px;
+  }
+
+  #ss-tts-btn {
+    width: 22px;
+    height: 22px;
+  }
+}
+
+@media (max-width: 480px) {
+  #ss-overlay {
+    height: 100px;
+    padding: 10px;
+  }
+
+  #ss-translation {
+    font-size: 16px;
+    line-height: 19px;
+  }
+
+  #ss-tts-btn {
+    width: 20px;
+    height: 20px;
+  }
+}
+
+/* ---- Clean reset to prevent inheritance from host page ---- */
+#ss-overlay,
+#ss-overlay * {
+  box-sizing: border-box;
+  margin: 0;
+  border: none;
+  outline: none;
+  text-decoration: none;
+  text-transform: none;
+  list-style: none;
+  background: none;
+  font-variant: normal;
+  /* Force our font stack — prevents host pages (Google etc.) from overriding */
+  font-family: 'Helvetica Neue', Helvetica, 'Inter', Arial, sans-serif !important;
+  font-style: italic !important;
+}
+
+#ss-overlay * {
+  padding: 0;
+}
+
+/* Re-apply the translation background (reset above clears it) */
+#ss-translation {
+  background: none !important;
+}
+
+/* ---- Highlight mode: outline around source text being translated ---- */
+.ss-highlighted {
+  outline: 1px solid #F1D871 !important;
+  outline-offset: 2px;
+  border-radius: 2px;
+}
