@@ -3,7 +3,7 @@
   "name": "Classic Subtitles",
   "version": "0.2.0",
   "description": "Learn languages passively — classic yellow movie-style subtitles on every page and video",
-  "permissions": ["storage"],
+  "permissions": ["storage", "tts"],
   "host_permissions": [
     "https://translate.googleapis.com/*"
   ],

@@ -145,10 +145,10 @@
       if (_lastCaptionTracks) {
         window.postMessage({ type: '__CS_CAPTION_TRACKS__', tracks: _lastCaptionTracks }, window.location.origin);
       }
-      // Also try player API approach
-      if (!_captionsTriggered) {
-        waitAndTrigger(0);
-      }
+      // Always try player API approach — don't skip even if previously triggered,
+      // because after ads end or SPA navigation we need to re-trigger caption loading
+      _captionsTriggered = false;
+      waitAndTrigger(0);
     }
   });
 

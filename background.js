@@ -62,6 +62,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         .then(translations => sendResponse({ translations }))
         .catch(err => sendResponse({ translations: [], error: err.message }));
       return true;
+
+    case 'tts-speak':
+      try {
+        chrome.tts.stop();
+        chrome.tts.speak(message.text, {
+          lang: message.lang || 'es',
+          rate: message.rate || 0.9,
+          volume: 1.0,
+          enqueue: false,
+        }, () => {
+          if (chrome.runtime.lastError) {
+            console.warn('[CS Background] TTS error:', chrome.runtime.lastError.message);
+          }
+        });
+      } catch (err) {
+        console.warn('[CS Background] TTS error:', err);
+      }
+      return false;
+
+    case 'tts-stop':
+      try { chrome.tts.stop(); } catch {}
+      return false;
   }
 });
 

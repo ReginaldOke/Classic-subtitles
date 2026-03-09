@@ -81,27 +81,29 @@
 
     // ---- TTS: initialise voices ----
     _initTTS() {
+      this._ttsMethod = null; // 'web' or 'chrome' — determined on first speak
       try {
         const loadVoices = () => {
-          this._ttsVoices = window.speechSynthesis.getVoices();
+          this._ttsVoices = window.speechSynthesis?.getVoices() || [];
           this._pickVoice();
         };
-        loadVoices();
-        // Voices load asynchronously — keep listening for changes
-        window.speechSynthesis.addEventListener('voiceschanged', loadVoices);
-        // Also retry after delays (some browsers are slow to populate voices)
-        if (this._ttsVoices.length === 0) {
-          setTimeout(loadVoices, 100);
-          setTimeout(loadVoices, 1000);
+        if (window.speechSynthesis) {
+          loadVoices();
+          window.speechSynthesis.addEventListener('voiceschanged', loadVoices);
+          if (this._ttsVoices.length === 0) {
+            setTimeout(loadVoices, 100);
+            setTimeout(loadVoices, 1000);
+          }
         }
-      } catch {}
+      } catch (err) {
+        console.warn('[CS] TTS init error:', err);
+      }
     }
 
     _pickVoice() {
       const lang = this._ttsLang || 'es';
       const v = this._ttsVoices;
       if (!v.length) return;
-      // Exact match (e.g. es-ES), then prefix (es-*), then any containing lang
       this._ttsVoice =
         v.find(x => x.lang === lang + '-ES') ||
         v.find(x => x.lang === lang + '-MX') ||
@@ -116,46 +118,84 @@
       this._pickVoice();
     }
 
-    // ---- TTS: speak / stop ----
-    _speak(text) {
+    // ---- TTS: speak via chrome.tts (background service worker) ----
+    // This is the PRIMARY method — more reliable than speechSynthesis in extensions
+    _speakChrome(text) {
       if (!text?.trim()) return;
       try {
-        window.speechSynthesis.cancel();
-        // Chrome bug: cancel() can leave synthesis in a stuck state.
-        // Small delay + resume() ensures clean playback.
-        setTimeout(() => {
-          try {
-            // Re-load voices if needed (Chrome lazy-loads them)
-            if (this._ttsVoices.length === 0) {
-              this._ttsVoices = window.speechSynthesis.getVoices();
-              this._pickVoice();
-            }
-            const utter = new SpeechSynthesisUtterance(text);
-            if (this._ttsVoice) utter.voice = this._ttsVoice;
-            utter.lang = this._ttsLang || 'es';
-            utter.rate = 0.9;
-            utter.pitch = 1.0;
-            utter.volume = 1.0;
-            window.speechSynthesis.speak(utter);
-            // Chrome bug: synthesis sometimes pauses itself — force resume
-            window.speechSynthesis.resume();
-            // Keep poking resume in case Chrome pauses mid-utterance
-            this._ttsResumeInterval = setInterval(() => {
-              if (window.speechSynthesis.speaking && window.speechSynthesis.paused) {
-                window.speechSynthesis.resume();
-              } else if (!window.speechSynthesis.speaking) {
-                clearInterval(this._ttsResumeInterval);
-              }
-            }, 200);
-          } catch {}
-        }, 50);
+        chrome.runtime.sendMessage({
+          type: 'tts-speak',
+          text: text.trim(),
+          lang: this._ttsLang || 'es',
+          rate: 0.9,
+        });
+      } catch (err) {
+        console.warn('[CS] chrome.tts fallback error:', err);
+      }
+    }
+
+    _stopChrome() {
+      try {
+        chrome.runtime.sendMessage({ type: 'tts-stop' });
       } catch {}
+    }
+
+    // ---- TTS: speak via Web Speech API (fallback) ----
+    _speakWeb(text) {
+      if (!text?.trim() || !window.speechSynthesis) return false;
+      try {
+        window.speechSynthesis.cancel();
+        if (this._ttsVoices.length === 0) {
+          this._ttsVoices = window.speechSynthesis.getVoices();
+          this._pickVoice();
+        }
+        const utter = new SpeechSynthesisUtterance(text.trim());
+        if (this._ttsVoice) utter.voice = this._ttsVoice;
+        utter.lang = this._ttsLang || 'es';
+        utter.rate = 0.9;
+        utter.volume = 1.0;
+        utter.onerror = (e) => {
+          console.warn('[CS] Web TTS utterance error:', e.error);
+          // If web speech fails, switch to chrome.tts for future calls
+          this._ttsMethod = 'chrome';
+          this._speakChrome(text);
+        };
+        window.speechSynthesis.speak(utter);
+        window.speechSynthesis.resume();
+        // Chrome auto-pause workaround
+        clearInterval(this._ttsResumeInterval);
+        this._ttsResumeInterval = setInterval(() => {
+          if (window.speechSynthesis.speaking && window.speechSynthesis.paused) {
+            window.speechSynthesis.resume();
+          } else if (!window.speechSynthesis.speaking) {
+            clearInterval(this._ttsResumeInterval);
+          }
+        }, 200);
+        return true;
+      } catch (err) {
+        console.warn('[CS] Web TTS error:', err);
+        return false;
+      }
+    }
+
+    // ---- TTS: unified speak (picks best method) ----
+    _speak(text) {
+      if (!text?.trim()) return;
+      // Use chrome.tts (background) as primary — it's more reliable in extensions
+      if (this._ttsMethod !== 'web') {
+        this._speakChrome(text);
+      } else {
+        if (!this._speakWeb(text)) {
+          this._speakChrome(text);
+        }
+      }
     }
 
     _stopSpeech() {
       try {
         clearInterval(this._ttsResumeInterval);
-        window.speechSynthesis.cancel();
+        window.speechSynthesis?.cancel();
+        this._stopChrome();
       } catch {}
     }
 
@@ -166,8 +206,15 @@
 
       if (this.ttsEnabled) {
         // Speak current text immediately
-        const text = this.translationEl?.textContent;
-        if (text) this._speak(text);
+        const text = this.translationEl?.textContent?.trim();
+        if (text) {
+          // Try web speech FIRST on user gesture (synchronous = preserves gesture)
+          // Then fall back to chrome.tts if that fails
+          if (!this._speakWeb(text)) {
+            this._ttsMethod = 'chrome';
+            this._speakChrome(text);
+          }
+        }
       } else {
         this._stopSpeech();
       }
@@ -636,7 +683,8 @@
         const role = node.getAttribute?.('role') || '';
         if (role === 'alertdialog' || role === 'banner' ||
             role === 'button' || role === 'menu' || role === 'menuitem' ||
-            role === 'menubar' || role === 'toolbar' || role === 'tablist') return true;
+            role === 'menubar' || role === 'toolbar' || role === 'tablist' ||
+            role === 'navigation' || role === 'complementary') return true;
 
         // Skip <button>, <script>, <style>, <noscript>, <template>, <svg> elements
         if (tag === 'button' || tag === 'script' || tag === 'style' ||
@@ -783,35 +831,57 @@
       if (this._captionRetryInterval) clearInterval(this._captionRetryInterval);
       let retries = 0;
       this._captionRetryInterval = setInterval(() => {
-        if (!this.active || this.captionTrack || retries > 20) {
+        if (!this.active || this.captionTrack || retries > 30) {
           clearInterval(this._captionRetryInterval);
           this._captionRetryInterval = null;
           return;
         }
         retries++;
         window.postMessage({ type: '__CS_REQUEST_CAPTIONS__' }, window.location.origin);
-      }, 3000); // Every 3s for up to 60s
+      }, 2000); // Every 2s for up to 60s
 
-      // Also listen for video playing event (e.g., after ad ends)
+      // Listen for video playing event (e.g., after ad ends)
       if (this.video) {
         this._playingRetryHandler = () => {
           if (!this.active) return;
           if (!this.captionTrack) {
-            // After ad ends and real video starts, re-request captions
-            setTimeout(() => {
-              if (this.active && !this.captionTrack) {
-                window.postMessage({ type: '__CS_REQUEST_CAPTIONS__' }, window.location.origin);
-              }
-            }, 500);
-            setTimeout(() => {
-              if (this.active && !this.captionTrack) {
-                window.postMessage({ type: '__CS_REQUEST_CAPTIONS__' }, window.location.origin);
-              }
-            }, 2000);
+            for (const delay of [300, 1000, 2500, 5000]) {
+              setTimeout(() => {
+                if (this.active && !this.captionTrack) {
+                  window.postMessage({ type: '__CS_REQUEST_CAPTIONS__' }, window.location.origin);
+                }
+              }, delay);
+            }
           }
         };
         this.video.addEventListener('playing', this._playingRetryHandler);
       }
+
+      // Watch for YouTube ad end — the player gets class 'ad-showing' during ads
+      this._watchForAdEnd();
+    }
+
+    // Detect when a YouTube ad finishes and re-request captions
+    _watchForAdEnd() {
+      const player = document.getElementById('movie_player');
+      if (!player) return;
+      this._adPlaying = player.classList.contains('ad-showing');
+      this._adObserver = new MutationObserver(() => {
+        if (!this.active) return;
+        const wasAd = this._adPlaying;
+        this._adPlaying = player.classList.contains('ad-showing');
+        if (wasAd && !this._adPlaying) {
+          // Ad just ended — aggressively re-request captions
+          for (const delay of [200, 800, 2000, 4000]) {
+            setTimeout(() => {
+              if (this.active && !this.captionTrack) {
+                window.postMessage({ type: '__CS_REQUEST_CAPTIONS__' }, window.location.origin);
+              }
+            }, delay);
+          }
+        }
+      });
+      this._adObserver.observe(player, { attributes: true, attributeFilter: ['class'] });
     }
 
     // ---- Listen for messages from MAIN world ----
@@ -1310,6 +1380,10 @@
         this.video.removeEventListener('playing', this._playingRetryHandler);
         this._playingRetryHandler = null;
       }
+      if (this._adObserver) {
+        this._adObserver.disconnect();
+        this._adObserver = null;
+      }
       this._captionSource = null;
       this.captionTrack = null;
       this._pendingTracks = null;
@@ -1411,6 +1485,7 @@
       this._ytUrlCheck = null;
       this._ytNavDebounce = false;
       this._lastYTUrl = '';
+      this._translateGen = 0; // Generation counter to prevent stale translations overwriting newer ones
     }
 
     async start() {
@@ -1759,6 +1834,38 @@
         }
       }
 
+      // Reddit feed: if on/inside a shreddit-post, extract post title or body
+      const rp = el.closest?.('shreddit-post') ||
+                 (el.tagName?.toLowerCase() === 'shreddit-post' ? el : null);
+      if (rp && !rc) {
+        const postTitle = rp.getAttribute('post-title');
+        // Check if there's a post body and cursor is over it
+        const bodyEl = rp.querySelector('[slot="text-body"] .md') ||
+                       rp.querySelector('[slot="text-body"]');
+        if (bodyEl) {
+          const bodyRect = bodyEl.getBoundingClientRect();
+          if (y >= bodyRect.top - 10 && y <= bodyRect.bottom + 10) {
+            const t = this._getVisibleText(bodyEl);
+            if (t && t.length >= 5 && /[a-zA-Z]{2,}/.test(t) && !this._looksLikeCode(t)) {
+              let cleaned = this._cleanExtractedText(t);
+              if (cleaned && cleaned.length >= 5) {
+                if (cleaned.length > 300) {
+                  cleaned = this._extractNearbySentences(bodyEl, x, y) || cleaned.substring(0, 300);
+                }
+                return { targetEl: bodyEl, cleaned: cleaned.substring(0, 300) };
+              }
+            }
+          }
+        }
+        // Default: use the clean post-title attribute
+        if (postTitle && postTitle.length >= 5 && /[a-zA-Z]{2,}/.test(postTitle)) {
+          const titleEl = rp.querySelector('[slot="title"]') ||
+                          rp.querySelector('[data-testid="post-title"]') ||
+                          rp.querySelector('a[id*="title"]');
+          return { targetEl: titleEl || rp, cleaned: this._cleanExtractedText(postTitle) };
+        }
+      }
+
       // Check title attribute first (YouTube #video-title uses title attr for clean text)
       const titleAttr = el.getAttribute?.('title');
       if (titleAttr && titleAttr.length >= 5 && titleAttr.length <= 300 && /[a-zA-Z]{2,}/.test(titleAttr)) {
@@ -1840,6 +1947,10 @@
     // ---- Hover to translate — works on any page, overrides click lock ----
     _onHover(e) {
       if (this._isYTWatch()) return;
+
+      // Immediately block _showBest() so in-flight auto-translations don't
+      // overwrite the hover result (the debounced callback sets it more permanently)
+      this._hoverLocked = true;
 
       // Debounce rapid mouseover events
       clearTimeout(this._hoverTimer);
@@ -1948,8 +2059,11 @@
     }
 
     async _translateText(text) {
+      const gen = ++this._translateGen;
       const tr = await this.translator.translate(text, this.settings.targetLang);
-      if (tr) {
+      // Only show if this is still the latest translation request (prevents stale
+      // translations from _showBest or earlier hovers overwriting current result)
+      if (tr && gen === this._translateGen) {
         this.overlay.show(tr, this.settings.showOriginal ? text : '');
       }
     }
