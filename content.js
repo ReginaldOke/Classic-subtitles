@@ -1906,7 +1906,21 @@
         }
       }
 
-      // Check title attribute first (YouTube #video-title uses title attr for clean text)
+      // For links and headings, use the element's own text even if short (≥2 chars).
+      // This prevents walking up to a parent container that includes extra text
+      // (e.g. hovering "Cats" link on Google picking up the breadcrumb below it).
+      const tag = el.tagName?.toLowerCase();
+      if (tag === 'a' || tag === 'h1' || tag === 'h2' || tag === 'h3' || tag === 'h4' || tag === 'h5' || tag === 'h6') {
+        const linkText = this._getVisibleText(el);
+        if (linkText && linkText.length >= 2 && /[a-zA-Z]{2,}/.test(linkText) && !this._looksLikeCode(linkText)) {
+          const cleaned = this._cleanExtractedText(linkText);
+          if (cleaned && cleaned.length >= 2 && cleaned.length <= 300 && !this._hasConcatenatedActions(cleaned)) {
+            return { targetEl: el, cleaned };
+          }
+        }
+      }
+
+      // Check title attribute (YouTube #video-title uses title attr for clean text)
       const titleAttr = el.getAttribute?.('title');
       if (titleAttr && titleAttr.length >= 5 && titleAttr.length <= 300 && /[a-zA-Z]{2,}/.test(titleAttr)) {
         return { targetEl: el, cleaned: this._cleanExtractedText(titleAttr) };
