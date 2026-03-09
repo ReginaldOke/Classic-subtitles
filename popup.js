@@ -8,7 +8,7 @@ const DEFAULTS = {
   enabled: true,
   fontSize: 24,
   showOriginal: false,
-  showBackground: false,
+  showBackground: true,
   highlightMode: false,
   targetLang: 'es',
 };

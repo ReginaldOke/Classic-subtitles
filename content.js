@@ -239,10 +239,10 @@
         this.container.style.background = 'none';
       } else {
         const clear = this._toTransparent(bg);
-        // Pixel-based gradient: 50px fade then solid — ensures text always has
-        // a solid background regardless of how tall the overlay grows
+        // Gradient fades over 28px, then 12px+ of solid background before text starts
+        // (padding-top is 40px, so text begins at 40px from top)
         this.container.style.background =
-          `linear-gradient(180deg, ${clear} 0px, ${bg} 50px)`;
+          `linear-gradient(180deg, ${clear} 0px, ${bg} 28px)`;
       }
 
       // Always adapt original text color to page background
@@ -553,25 +553,21 @@
         ]);
       }
 
-      // Reels and post detail pages — individual comments/captions
+      // Post detail pages — prioritize the post CAPTION over comments
       const isPost = path.startsWith('/p/') ||
                      path.startsWith('/reel/') ||
                      document.querySelector('[role="dialog"] article');
 
       if (isPost) {
-        // Reels comment panel and post comments — look for comment text spans
-        const comment = this._bestVisible([
-          'ul li[role="menuitem"] span[dir="auto"]',
-          'ul > div > li span[dir="auto"]',
-          'ul > li span[dir="auto"]',
-          // Reels comment panel: comments inside scrollable container
-          '[role="dialog"] span[dir="auto"]',
-          'div[style*="overflow"] span[dir="auto"]',
-          // Post captions
-          'h1 + div span[dir="auto"]',
-          'span[dir="auto"]',
+        // The post caption is typically the FIRST span[dir="auto"] that is NOT inside
+        // a comment list (<ul>). Try caption-specific locations first.
+        const caption = this._bestVisible([
+          'h1 + div span[dir="auto"]',          // Caption right after post header
+          'article > div > div span[dir="auto"]', // Caption area (before comment list)
         ]);
-        if (comment) return comment;
+        if (caption) return caption;
+        // Fallback to any visible text span (including comments)
+        return this._bestVisible(['span[dir="auto"]']);
       }
 
       // Profile pages — individual text elements (name, bio), not the whole header
@@ -582,14 +578,116 @@
         ]);
       }
 
-      // Feed page or fallback: post captions
-      return this._bestVisible(['h1', 'article span[dir="auto"]', 'span._ap3a']);
+      // Feed page — find the ARTICLE closest to viewport center, then its caption
+      return this._instagramFeedCaption();
     }
 
-    _facebook() { return this._bestVisible(['[data-ad-preview="message"]', '[dir="auto"]']); }
+    // Instagram feed: find the post closest to viewport center and extract its caption
+    _instagramFeedCaption() {
+      const articles = document.querySelectorAll('article');
+      if (articles.length === 0) {
+        return this._bestVisible(['h1', 'span[dir="auto"]']);
+      }
+
+      let bestArticle = null, bestScore = -Infinity;
+      for (const article of articles) {
+        const rect = article.getBoundingClientRect();
+        const score = this._vScore(rect);
+        if (score > bestScore) { bestScore = score; bestArticle = article; }
+      }
+      if (!bestArticle) return null;
+
+      // Within the winning article, find the caption text.
+      // Captions are span[dir="auto"] that are NOT inside a <ul> (comment list)
+      // and NOT inside a <section> (action bar with Like/Comment/Share/Save).
+      const spans = bestArticle.querySelectorAll('span[dir="auto"]');
+      for (const span of spans) {
+        // Skip if inside a comment list
+        if (span.closest('ul')) continue;
+        // Skip if inside an action bar section
+        if (span.closest('section')) continue;
+        // Skip very short text (usernames, timestamps)
+        const text = span.textContent?.trim();
+        if (!text || text.length < 8 || text.length > 800) continue;
+        if (!/[a-zA-Z]{2,}/.test(text)) continue;
+        if (this._isExcluded(span)) continue;
+        return { text: text.substring(0, 300), element: span };
+      }
+
+      // Fallback: any caption-like text in the article
+      for (const span of spans) {
+        const text = span.textContent?.trim();
+        if (!text || text.length < 8 || text.length > 800) continue;
+        if (!/[a-zA-Z]{2,}/.test(text)) continue;
+        return { text: text.substring(0, 300), element: span };
+      }
+
+      return null;
+    }
+
+    _facebook() {
+      // Facebook feed: find the post closest to viewport center, then its caption.
+      // Posts are in div[role="article"] or div[data-ad-preview] containers.
+      // Post text is in div[dir="auto"] or span[dir="auto"] within the post.
+
+      // Try post-level containers first
+      const posts = document.querySelectorAll('[role="article"]');
+      if (posts.length > 0) {
+        let bestPost = null, bestScore = -Infinity;
+        for (const post of posts) {
+          const rect = post.getBoundingClientRect();
+          const score = this._vScore(rect);
+          if (score > bestScore) { bestScore = score; bestPost = post; }
+        }
+        if (bestPost) {
+          // Find the post's main text content (not comments, not UI chrome)
+          const textEls = bestPost.querySelectorAll('[data-ad-preview="message"], div[dir="auto"], span[dir="auto"]');
+          for (const el of textEls) {
+            // Skip if inside a comment area (typically nested articles or form elements)
+            if (el.closest('form')) continue;
+            if (el.closest('ul')) continue;
+            // Skip if the element is a nested article (comment)
+            const parentArticle = el.closest('[role="article"]');
+            if (parentArticle && parentArticle !== bestPost) continue;
+            const text = el.textContent?.trim();
+            if (!text || text.length < 8 || text.length > 800) continue;
+            if (!/[a-zA-Z]{2,}/.test(text)) continue;
+            if (this._isExcluded(el)) continue;
+            return { text: text.substring(0, 300), element: el };
+          }
+        }
+      }
+
+      // Fallback
+      return this._bestVisible(['[data-ad-preview="message"]', 'div[dir="auto"]']);
+    }
     _tiktok() { return this._bestVisible(['[data-e2e="browse-video-desc"]']); }
     _hn() { return this._bestVisible(['.titleline > a', '.title > a']); }
-    _linkedin() { return this._bestVisible(['.feed-shared-update-v2__description', '.break-words span[dir="ltr"]']); }
+    _linkedin() {
+      // LinkedIn feed: post text in update descriptions or break-words spans
+      const posts = document.querySelectorAll('.feed-shared-update-v2, [data-urn]');
+      if (posts.length > 0) {
+        let bestPost = null, bestScore = -Infinity;
+        for (const post of posts) {
+          const rect = post.getBoundingClientRect();
+          const score = this._vScore(rect);
+          if (score > bestScore) { bestScore = score; bestPost = post; }
+        }
+        if (bestPost) {
+          const desc = bestPost.querySelector('.feed-shared-update-v2__description') ||
+                       bestPost.querySelector('.break-words span[dir="ltr"]') ||
+                       bestPost.querySelector('.feed-shared-text span[dir="ltr"]') ||
+                       bestPost.querySelector('span[dir="ltr"]');
+          if (desc) {
+            const text = desc.textContent?.trim();
+            if (text && text.length >= 8 && /[a-zA-Z]{2,}/.test(text)) {
+              return { text: text.substring(0, 300), element: desc };
+            }
+          }
+        }
+      }
+      return this._bestVisible(['.feed-shared-update-v2__description', '.break-words span[dir="ltr"]']);
+    }
 
     _generic() {
       const heading = this._bestVisible(['h1', 'h2']);
@@ -916,8 +1014,11 @@
     async _onInterceptedUrl(rawUrl) {
       try {
         const url = new URL(rawUrl, window.location.origin);
-        // Security: only allow YouTube timedtext API URLs
-        if (!url.hostname.endsWith('youtube.com') && !url.hostname.endsWith('googlevideo.com')) return;
+        // Security: only allow YouTube/Google timedtext API URLs
+        // Use dot-prefix check to prevent evilyoutube.com from matching
+        const h = url.hostname;
+        if (!(h === 'youtube.com' || h.endsWith('.youtube.com') ||
+              h === 'googlevideo.com' || h.endsWith('.googlevideo.com'))) return;
         if (!url.pathname.includes('/api/timedtext')) return;
         const lang = this.settings.targetLang || 'es';
 
@@ -964,6 +1065,14 @@
     async _loadFromTracks(tracks) {
       const track = this._pickTrack(tracks);
       if (!track?.baseUrl) return;
+
+      // Security: validate baseUrl hostname before fetching
+      try {
+        const bu = new URL(track.baseUrl, window.location.origin);
+        const bh = bu.hostname;
+        if (!(bh === 'youtube.com' || bh.endsWith('.youtube.com') ||
+              bh === 'googlevideo.com' || bh.endsWith('.googlevideo.com'))) return;
+      } catch { return; }
 
       const lang = this.settings.targetLang || 'es';
       const sep = track.baseUrl.includes('?') ? '&' : '?';
