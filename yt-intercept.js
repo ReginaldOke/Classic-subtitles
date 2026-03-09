@@ -127,10 +127,15 @@
   }
 
   // ---- Poll until YouTube's player is ready ----
+  let _waitGen = 0; // Generation token — cancels previous polling chains
   function waitAndTrigger(attempts) {
-    if (attempts > 60) return; // Give up after ~30s
-    if (triggerCaptionLoad()) return; // Success
-    setTimeout(() => waitAndTrigger(attempts + 1), 500);
+    const gen = ++_waitGen;
+    function poll(n) {
+      if (n > 60 || gen !== _waitGen) return; // Give up or superseded
+      if (triggerCaptionLoad()) return; // Success
+      setTimeout(() => poll(n + 1), 500);
+    }
+    poll(attempts);
   }
 
   // ---- Listen for requests from content script ----

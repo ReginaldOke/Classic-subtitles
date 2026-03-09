@@ -83,16 +83,16 @@
     _initTTS() {
       this._ttsMethod = null; // 'web' or 'chrome' — determined on first speak
       try {
-        const loadVoices = () => {
+        this._voicesChangedHandler = () => {
           this._ttsVoices = window.speechSynthesis?.getVoices() || [];
           this._pickVoice();
         };
         if (window.speechSynthesis) {
-          loadVoices();
-          window.speechSynthesis.addEventListener('voiceschanged', loadVoices);
+          this._voicesChangedHandler();
+          window.speechSynthesis.addEventListener('voiceschanged', this._voicesChangedHandler);
           if (this._ttsVoices.length === 0) {
-            setTimeout(loadVoices, 100);
-            setTimeout(loadVoices, 1000);
+            setTimeout(() => this._voicesChangedHandler(), 100);
+            setTimeout(() => this._voicesChangedHandler(), 1000);
           }
         }
       } catch (err) {
@@ -298,14 +298,15 @@
     }
 
     _watchTheme() {
+      let themeTimer = null;
       const obs = new MutationObserver(() => {
-        setTimeout(() => this._syncBg(), 200);
+        clearTimeout(themeTimer);
+        themeTimer = setTimeout(() => this._syncBg(), 300);
       });
       const attrs = ['class', 'style', 'data-theme', 'data-color-mode', 'data-dark-theme'];
       for (const el of [document.documentElement, document.body]) {
         if (el) obs.observe(el, { attributes: true, attributeFilter: attrs });
       }
-      setInterval(() => this._syncBg(), 8000);
     }
 
     show(translation, original = '') {
@@ -344,6 +345,10 @@
 
     destroy() {
       this._stopSpeech();
+      clearInterval(this._ttsResumeInterval);
+      if (this._voicesChangedHandler && window.speechSynthesis) {
+        window.speechSynthesis.removeEventListener('voiceschanged', this._voicesChangedHandler);
+      }
       this.container?.remove();
       this.container = null;
     }
@@ -871,7 +876,16 @@
         const wasAd = this._adPlaying;
         this._adPlaying = player.classList.contains('ad-showing');
         if (wasAd && !this._adPlaying) {
-          // Ad just ended — aggressively re-request captions
+          // Ad just ended — reset ALL caption state so we start fresh
+          // The previous captionTrack/source may be from the ad, not the real video
+          if (this.syncInterval) clearInterval(this.syncInterval);
+          this.syncInterval = null;
+          this.captionTrack = null;
+          this._captionSource = null;
+          this._pendingTracks = null;
+          this.lastCapText = '';
+
+          // Re-request captions aggressively
           for (const delay of [200, 800, 2000, 4000]) {
             setTimeout(() => {
               if (this.active && !this.captionTrack) {
@@ -1083,7 +1097,10 @@
         if (this._captionSource === 'intercepted') return;
         if (this._paused) return; // Pause mode handles overlay
 
-        const segs = document.querySelectorAll('.ytp-caption-segment');
+        // Scope query to caption container for efficiency
+        const container = document.querySelector('.ytp-caption-window-container') || document.querySelector('#movie_player');
+        const segs = container?.querySelectorAll('.ytp-caption-segment') ||
+                     document.querySelectorAll('.ytp-caption-segment');
         if (segs.length) {
           const text = Array.from(segs).map(s => s.textContent).join(' ').trim();
           if (text && text !== this.lastCapText) {
@@ -1092,10 +1109,28 @@
           }
         }
       });
-      const target = document.querySelector('#movie_player') || document.body;
-      this.captionObserver.observe(target, {
-        childList: true, subtree: true, characterData: true,
-      });
+      // Only observe #movie_player — never fall back to document.body (too expensive)
+      const player = document.querySelector('#movie_player');
+      if (player) {
+        this.captionObserver.observe(player, {
+          childList: true, subtree: true, characterData: true,
+        });
+      } else {
+        // Retry until player appears
+        let retries = 0;
+        const retry = setInterval(() => {
+          retries++;
+          const p = document.querySelector('#movie_player');
+          if (p) {
+            this.captionObserver.observe(p, {
+              childList: true, subtree: true, characterData: true,
+            });
+            clearInterval(retry);
+          } else if (retries > 20) {
+            clearInterval(retry);
+          }
+        }, 500);
+      }
     }
 
     async _translateAndShow(text) {
@@ -1629,11 +1664,16 @@
       document.addEventListener('visibilitychange', this._boundVisibility);
 
       // DOM mutations (infinite scroll, SPA content updates)
+      // Throttle gate: skip callback entirely when a timer is already pending
       this.domObserver = new MutationObserver(() => {
-        clearTimeout(this._domTimer);
-        this._domTimer = setTimeout(() => this._showBest(), 300);
+        if (this._domTimer) return; // Already pending — skip
+        this._domTimer = setTimeout(() => {
+          this._domTimer = null;
+          this._showBest();
+        }, 300);
       });
-      this.domObserver.observe(document.body, { childList: true, subtree: true });
+      const mainEl = document.querySelector('main') || document.querySelector('#content') || document.body;
+      this.domObserver.observe(mainEl, { childList: true, subtree: true });
     }
 
     _stopPage() {

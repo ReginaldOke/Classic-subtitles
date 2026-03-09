@@ -95,7 +95,7 @@ async function handleTranslation(text, targetLang) {
   const lang = VALID_LANGS.has(targetLang) ? targetLang : 'es';
 
   const trimmed = text.trim().substring(0, 500); // Cap length
-  const cacheKey = `${trimmed}|${lang}`;
+  const cacheKey = `t|${trimmed}|${lang}`; // Prefix 't|' to namespace translation cache keys
 
   // Check in-memory cache
   if (translationCache.has(cacheKey)) {
@@ -204,16 +204,15 @@ function storeTranslation(key, value) {
 }
 
 let _evictPending = false;
+let _storageWriteCount = 0;
 async function evictStorageCacheIfNeeded() {
   if (_evictPending) return;
-  _evictPending = true;
+  _storageWriteCount++;
 
   // Throttle: only check every 50 writes
-  if (translationCache.size % 50 !== 0) {
-    _evictPending = false;
-    return;
-  }
+  if (_storageWriteCount % 50 !== 0) return;
 
+  _evictPending = true;
   try {
     const all = await new Promise(resolve => {
       chrome.storage.local.get(null, (data) => {
@@ -221,10 +220,10 @@ async function evictStorageCacheIfNeeded() {
         resolve(data || {});
       });
     });
-    const keys = Object.keys(all);
-    if (keys.length > STORAGE_CACHE_MAX) {
-      // Remove oldest entries (first inserted = first in keys)
-      const toRemove = keys.slice(0, keys.length - STORAGE_CACHE_MAX);
+    // Only evict translation cache keys (prefixed with 't|')
+    const cacheKeys = Object.keys(all).filter(k => k.startsWith('t|'));
+    if (cacheKeys.length > STORAGE_CACHE_MAX) {
+      const toRemove = cacheKeys.slice(0, cacheKeys.length - STORAGE_CACHE_MAX);
       chrome.storage.local.remove(toRemove);
     }
   } catch {}
