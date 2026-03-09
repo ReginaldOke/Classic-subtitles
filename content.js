@@ -87,8 +87,12 @@
           this._pickVoice();
         };
         loadVoices();
+        // Voices load asynchronously — keep listening for changes
+        window.speechSynthesis.addEventListener('voiceschanged', loadVoices);
+        // Also retry after delays (some browsers are slow to populate voices)
         if (this._ttsVoices.length === 0) {
-          window.speechSynthesis.addEventListener('voiceschanged', loadVoices, { once: true });
+          setTimeout(loadVoices, 100);
+          setTimeout(loadVoices, 1000);
         }
       } catch {}
     }
@@ -96,12 +100,14 @@
     _pickVoice() {
       const lang = this._ttsLang || 'es';
       const v = this._ttsVoices;
-      // Exact match (e.g. es-ES), then prefix (es-*), then any
+      if (!v.length) return;
+      // Exact match (e.g. es-ES), then prefix (es-*), then any containing lang
       this._ttsVoice =
         v.find(x => x.lang === lang + '-ES') ||
         v.find(x => x.lang === lang + '-MX') ||
         v.find(x => x.lang.startsWith(lang + '-')) ||
         v.find(x => x.lang.startsWith(lang)) ||
+        v.find(x => x.lang.includes(lang)) ||
         null;
     }
 
@@ -115,18 +121,42 @@
       if (!text?.trim()) return;
       try {
         window.speechSynthesis.cancel();
-        const utter = new SpeechSynthesisUtterance(text);
-        if (this._ttsVoice) utter.voice = this._ttsVoice;
-        utter.lang = this._ttsLang || 'es';
-        utter.rate = 0.9;
-        utter.pitch = 1.0;
-        utter.volume = 1.0;
-        window.speechSynthesis.speak(utter);
+        // Chrome bug: cancel() can leave synthesis in a stuck state.
+        // Small delay + resume() ensures clean playback.
+        setTimeout(() => {
+          try {
+            // Re-load voices if needed (Chrome lazy-loads them)
+            if (this._ttsVoices.length === 0) {
+              this._ttsVoices = window.speechSynthesis.getVoices();
+              this._pickVoice();
+            }
+            const utter = new SpeechSynthesisUtterance(text);
+            if (this._ttsVoice) utter.voice = this._ttsVoice;
+            utter.lang = this._ttsLang || 'es';
+            utter.rate = 0.9;
+            utter.pitch = 1.0;
+            utter.volume = 1.0;
+            window.speechSynthesis.speak(utter);
+            // Chrome bug: synthesis sometimes pauses itself — force resume
+            window.speechSynthesis.resume();
+            // Keep poking resume in case Chrome pauses mid-utterance
+            this._ttsResumeInterval = setInterval(() => {
+              if (window.speechSynthesis.speaking && window.speechSynthesis.paused) {
+                window.speechSynthesis.resume();
+              } else if (!window.speechSynthesis.speaking) {
+                clearInterval(this._ttsResumeInterval);
+              }
+            }, 200);
+          } catch {}
+        }, 50);
       } catch {}
     }
 
     _stopSpeech() {
-      try { window.speechSynthesis.cancel(); } catch {}
+      try {
+        clearInterval(this._ttsResumeInterval);
+        window.speechSynthesis.cancel();
+      } catch {}
     }
 
     // ---- TTS: toggle mute/unmute ----
@@ -377,12 +407,36 @@
       ]);
     }
 
-    // Comment pages — translate only the comment BODY closest to center
+    // Comment pages — translate the post body OR comment closest to viewport center
     _redditComment() {
+      let best = null, bestScore = -Infinity, bestEl = null;
+
+      // Shreddit (new Reddit) — check post body/description first
+      const shredditPost = document.querySelector('shreddit-post');
+      if (shredditPost) {
+        const bodyEl =
+          shredditPost.querySelector('[slot="text-body"] .md') ||
+          shredditPost.querySelector('[slot="text-body"]') ||
+          shredditPost.querySelector('.md:not(shreddit-comment .md)');
+        if (bodyEl) {
+          const text = bodyEl.textContent?.trim();
+          if (text && text.length >= 8 && /[a-zA-Z]{2,}/.test(text)) {
+            const rect = bodyEl.getBoundingClientRect();
+            const score = this._vScore(rect);
+            if (score > bestScore) {
+              bestScore = score;
+              best = text.length > 300
+                ? this._chunkNearCenter(text, rect)
+                : text.substring(0, 300);
+              bestEl = bodyEl;
+            }
+          }
+        }
+      }
+
       // Shreddit (new Reddit) — find comment body text within shreddit-comment elements
       const comments = document.querySelectorAll('shreddit-comment');
       if (comments.length > 0) {
-        let best = null, bestScore = -Infinity, bestEl = null;
         for (const comment of comments) {
           // Find the actual comment text in known content containers
           const contentEl =
@@ -392,18 +446,22 @@
             comment.querySelector('p');
           if (!contentEl) continue;
           const text = contentEl.textContent?.trim();
-          if (!text || text.length < 8 || text.length > 500) continue;
+          if (!text || text.length < 8) continue;
           if (!/[a-zA-Z]{2,}/.test(text)) continue;
-          const rect = comment.getBoundingClientRect();
+          const rect = contentEl.getBoundingClientRect();
           const score = this._vScore(rect);
           if (score > bestScore) {
             bestScore = score;
-            best = text.substring(0, 300);
-            bestEl = comment;
+            best = text.length > 300
+              ? this._chunkNearCenter(text, rect)
+              : text.substring(0, 300);
+            bestEl = contentEl; // Highlight the content element, not the whole comment
           }
         }
-        if (best) return { text: best, element: bestEl };
       }
+
+      if (best) return { text: best, element: bestEl };
+
       // Old Reddit fallback — comment body text only (not usernames/flairs)
       return this._bestVisible([
         '.comment .md > p',
@@ -435,24 +493,29 @@
 
       // Stories — only show text captions/stickers ON the story itself, never UI chrome
       if (path.startsWith('/stories/')) {
-        // Story text overlays are positioned absolute on the story media
-        // These are user-added captions, questions, polls etc.
         return this._bestVisible([
-          '[class*="StoryText"] span',                         // Story text sticker
-          '[style*="position: absolute"] span[dir="auto"]',    // Positioned text overlay
+          '[class*="StoryText"] span',
+          '[style*="position: absolute"] span[dir="auto"]',
         ]);
       }
 
-      // Post detail pages — individual comments/captions
+      // Reels and post detail pages — individual comments/captions
       const isPost = path.startsWith('/p/') ||
                      path.startsWith('/reel/') ||
                      document.querySelector('[role="dialog"] article');
 
       if (isPost) {
+        // Reels comment panel and post comments — look for comment text spans
         const comment = this._bestVisible([
           'ul li[role="menuitem"] span[dir="auto"]',
           'ul > div > li span[dir="auto"]',
           'ul > li span[dir="auto"]',
+          // Reels comment panel: comments inside scrollable container
+          '[role="dialog"] span[dir="auto"]',
+          'div[style*="overflow"] span[dir="auto"]',
+          // Post captions
+          'h1 + div span[dir="auto"]',
+          'span[dir="auto"]',
         ]);
         if (comment) return comment;
       }
@@ -460,8 +523,8 @@
       // Profile pages — individual text elements (name, bio), not the whole header
       if (/^\/[^/]+\/?$/.test(path) && !path.startsWith('/p/')) {
         return this._bestVisible([
-          'header section span[dir="auto"]',   // Bio text
-          'header h2',                          // Display name
+          'header section span[dir="auto"]',
+          'header h2',
         ]);
       }
 
@@ -489,14 +552,17 @@
             const text = (preferAttr && el.getAttribute(preferAttr))
               ? el.getAttribute(preferAttr).trim()
               : el.textContent?.trim();
-            if (!text || text.length < 8 || text.length > 400) continue;
+            if (!text || text.length < 8 || text.length > 800) continue;
             if (!/[a-zA-Z]{2,}/.test(text)) continue;
             if (this._isExcluded(el)) continue;
             const rect = el.getBoundingClientRect();
             const score = this._vScore(rect);
             if (score > bestScore) {
               bestScore = score;
-              best = text.substring(0, 300);
+              // For long text, extract sentences near viewport center
+              best = text.length > 300
+                ? this._chunkNearCenter(text, rect)
+                : text.substring(0, 300);
               bestEl = el;
             }
           }
@@ -564,22 +630,37 @@
           testId.includes('subreddit-name')
         ) return true;
 
-        // Generic role checks — skip buttons, menus, dialogs, navigation
+        // Generic role checks — skip buttons, menus, navigation
+        // Note: 'dialog' excluded from this check because Instagram/etc. use dialogs for content
         const role = node.getAttribute?.('role') || '';
-        if (role === 'dialog' || role === 'alertdialog' || role === 'banner' ||
+        if (role === 'alertdialog' || role === 'banner' ||
             role === 'button' || role === 'menu' || role === 'menuitem' ||
             role === 'menubar' || role === 'toolbar' || role === 'tablist') return true;
 
         // Skip <button> elements and their children (never translate buttons/actions)
         if (tag === 'button') return true;
 
-        // Instagram-specific: story UI, reactions, username headers, action bars
+        // Skip timestamps
+        if (tagName === 'time') return true;
+
+        // Instagram-specific: story UI, reactions, action bars
         if (
-          cls.includes('_ac') && cls.includes('story') || // story overlay elements
-          cls.includes('coreSpriteMore') || cls.includes('coreSprite') ||
-          cls.includes('_a9-') || // IG action bar classes
-          tagName === 'time' // timestamps
+          (cls.includes('_ac') && cls.includes('story')) || // story overlay elements
+          cls.includes('coreSpriteMore') || cls.includes('coreSprite')
         ) return true;
+
+        // Instagram/social action bars: section/div containing like/comment/share buttons
+        // Detect by counting action words — if 2+ present in short text, it's an action bar
+        if (tagName === 'section' || (tagName === 'div' && node.childElementCount > 1)) {
+          const actionText = (node.textContent?.trim() || '').toLowerCase();
+          if (actionText.length < 200) {
+            const actions = ['like', 'comment', 'share', 'save', 'send', 'more',
+              'me gusta', 'comentar', 'compartir', 'guardar', 'enviar', 'más',
+              'reply', 'responder', 'repost', 'views', 'view all', 'ver todo'];
+            const matchCount = actions.filter(a => actionText.includes(a)).length;
+            if (matchCount >= 2) return true;
+          }
+        }
 
         node = node.parentElement;
       }
@@ -604,6 +685,23 @@
       const vpCenter = window.innerHeight / 2;
       const elCenter = (rect.top + rect.bottom) / 2;
       return vH - Math.abs(elCenter - vpCenter) * 0.3;
+    }
+
+    // Extract 1-2 sentences near viewport center from long text
+    _chunkNearCenter(text, rect) {
+      if (!text || text.length <= 300) return text?.substring(0, 300);
+      const sentences = text.match(/[^.!?\n]+(?:[.!?\n]+|\s*$)/g) || [text];
+      if (sentences.length <= 2) return text.substring(0, 300);
+      const vpCenter = window.innerHeight / 2;
+      const relY = Math.max(0, Math.min(1, (vpCenter - rect.top) / Math.max(rect.height, 1)));
+      const charOffset = Math.floor(relY * text.length);
+      let running = 0, idx = 0;
+      for (let i = 0; i < sentences.length; i++) {
+        if (running + sentences[i].length > charOffset) { idx = i; break; }
+        running += sentences[i].length;
+        idx = i;
+      }
+      return sentences.slice(idx, Math.min(sentences.length, idx + 2)).join('').trim().substring(0, 300);
     }
   }
 
@@ -1429,6 +1527,104 @@
       this.lastText = '';
     }
 
+    // ---- Smart text extraction helpers ----
+
+    // Clean extracted text: strip bare URLs, excess whitespace
+    _cleanExtractedText(text) {
+      if (!text) return text;
+      return text
+        .replace(/https?:\/\/\S+/g, '')
+        .replace(/www\.\S+/g, '')
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+    }
+
+    // Find the most specific child element near cursor with reasonable text
+    _findBestChildNearPoint(el, x, y) {
+      const selectors = 'p, li, h1, h2, h3, h4, h5, h6, blockquote, td, a, span, yt-formatted-string, [dir="auto"]';
+      const children = el.querySelectorAll(selectors);
+      if (children.length === 0) return null;
+
+      let bestChild = null, bestDist = Infinity;
+      for (const child of children) {
+        // Prefer the title attribute if present (e.g. YouTube #video-title)
+        const titleAttr = child.getAttribute('title');
+        const cText = (titleAttr && titleAttr.length >= 5) ? titleAttr.trim() : child.textContent?.trim();
+        if (!cText || cText.length < 5 || cText.length > 500) continue;
+        if (!/[a-zA-Z]{2,}/.test(cText)) continue;
+        if (this.extractor._isExcluded(child)) continue;
+        if (this.extractor._isMostlyUsernames(cText)) continue;
+
+        const rect = child.getBoundingClientRect();
+        if (rect.height === 0 || rect.width === 0) continue;
+
+        // Distance weighted toward vertical proximity
+        const cy = (rect.top + rect.bottom) / 2;
+        const cx = (rect.left + rect.right) / 2;
+        const dist = Math.abs(cy - y) * 2 + Math.abs(cx - x) * 0.5;
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestChild = { el: child, text: cText.substring(0, 300) };
+        }
+      }
+
+      // If best child's text is still long, extract sentences near cursor
+      if (bestChild && bestChild.text.length > 300) {
+        const sentences = this._extractNearbySentences(bestChild.el, x, y);
+        if (sentences) bestChild.text = sentences;
+      }
+
+      return bestChild;
+    }
+
+    // Extract 1-2 sentences near cursor from long text block
+    _extractNearbySentences(el, x, y) {
+      const fullText = this._cleanExtractedText(el.textContent?.trim());
+      if (!fullText || fullText.length < 10) return null;
+      if (fullText.length <= 300) return fullText;
+
+      const sentences = fullText.match(/[^.!?\n]+(?:[.!?\n]+|\s*$)/g) || [fullText];
+      if (sentences.length <= 1) return fullText.substring(0, 300);
+
+      // Try to find cursor position in text using caretRangeFromPoint
+      let charOffset = -1;
+      if (x != null && y != null) {
+        try {
+          const range = document.caretRangeFromPoint(x, y);
+          if (range && el.contains(range.startContainer)) {
+            const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+            let total = 0, node;
+            while ((node = walker.nextNode())) {
+              if (node === range.startContainer) {
+                charOffset = total + range.startOffset;
+                break;
+              }
+              total += node.textContent.length;
+            }
+          }
+        } catch {}
+      }
+
+      // Fallback: estimate from viewport center
+      if (charOffset < 0) {
+        const rect = el.getBoundingClientRect();
+        const vpCenter = window.innerHeight / 2;
+        const relY = Math.max(0, Math.min(1, (vpCenter - rect.top) / Math.max(rect.height, 1)));
+        charOffset = Math.floor(relY * fullText.length);
+      }
+
+      // Find sentence containing cursor
+      let running = 0, bestIdx = 0;
+      for (let i = 0; i < sentences.length; i++) {
+        if (running + sentences[i].length > charOffset) { bestIdx = i; break; }
+        running += sentences[i].length;
+        bestIdx = i;
+      }
+
+      const result = sentences.slice(bestIdx, Math.min(sentences.length, bestIdx + 2)).join('').trim();
+      return result.substring(0, 300) || fullText.substring(0, 300);
+    }
+
     _onScroll() {
       // Scrolling releases click and hover locks — auto-extraction resumes
       this._clickLocked = false;
@@ -1447,6 +1643,41 @@
       }, 150);
     }
 
+    // ---- Shared: extract text from an element, drilling down for specificity ----
+    _smartExtract(el, x, y) {
+      // Check title attribute first (YouTube #video-title uses title attr for clean text)
+      const titleAttr = el.getAttribute?.('title');
+      if (titleAttr && titleAttr.length >= 5 && titleAttr.length <= 300 && /[a-zA-Z]{2,}/.test(titleAttr)) {
+        return { targetEl: el, cleaned: this._cleanExtractedText(titleAttr) };
+      }
+
+      const rawText = el.textContent?.trim();
+      if (!rawText || rawText.length < 5 || !/[a-zA-Z]{2,}/.test(rawText)) return null;
+      if (this.extractor._isExcluded(el) || this.extractor._isMostlyUsernames(rawText)) return null;
+
+      let targetEl = el;
+      let cleaned;
+
+      if (rawText.length <= 300) {
+        // Short text — use as-is after cleaning
+        cleaned = this._cleanExtractedText(rawText);
+      } else {
+        // Long text — try to find a specific child element near cursor
+        const child = this._findBestChildNearPoint(el, x, y);
+        if (child) {
+          targetEl = child.el;
+          cleaned = this._cleanExtractedText(child.text);
+        } else {
+          // No specific child — extract nearby sentences
+          cleaned = this._extractNearbySentences(el, x, y);
+        }
+      }
+
+      if (!cleaned || cleaned.length < 5) return null;
+      cleaned = cleaned.substring(0, 300);
+      return { targetEl, cleaned };
+    }
+
     // ---- Click to translate (highest priority — overrides hover and auto) ----
     _onClick(e) {
       if (this._isYTWatch()) return;
@@ -1457,27 +1688,23 @@
 
       // Walk up from click target to find meaningful text
       let el = e.target;
-      while (el && el !== document.body) {
+      let depth = 0;
+      while (el && el !== document.body && depth < 10) {
         // Skip our own overlay
         if (el.id === 'ss-overlay' || el.id === 'ss-translation' || el.id === 'ss-original' ||
             el.id === 'ss-tts-btn' || el.id === 'ss-tts-row') return;
 
-        const text = el.textContent?.trim();
-        if (text && text.length >= 5 && text.length <= 800 && /[a-zA-Z]{2,}/.test(text)) {
-          // Skip excluded elements, usernames, buttons
-          if (this.extractor._isExcluded(el) || this.extractor._isMostlyUsernames(text)) {
-            el = el.parentElement;
-            continue;
-          }
-          const cleaned = text.substring(0, 300);
-          if (cleaned === this.lastText) return; // already showing this
-          this.lastText = cleaned;
-          this._clickLocked = true; // Lock — prevent auto-extraction from overriding
-          this._highlightElement(el);
-          this._translateText(cleaned);
+        const result = this._smartExtract(el, e.clientX, e.clientY);
+        if (result) {
+          if (result.cleaned === this.lastText) return;
+          this.lastText = result.cleaned;
+          this._clickLocked = true;
+          this._highlightElement(result.targetEl);
+          this._translateText(result.cleaned);
           return;
         }
         el = el.parentElement;
+        depth++;
       }
 
       // Clicked on non-text area — unlock so auto-extraction resumes
@@ -1496,32 +1723,25 @@
         // Walk up from hover target to find meaningful text
         let el = e.target;
         let depth = 0;
-        while (el && el !== document.body && depth < 6) {
+        while (el && el !== document.body && depth < 8) {
           // Skip our own overlay
           if (el.id === 'ss-overlay' || el.id === 'ss-translation' || el.id === 'ss-original' ||
               el.id === 'ss-tts-btn' || el.id === 'ss-tts-row') return;
 
-          const text = el.textContent?.trim();
-          if (text && text.length >= 5 && text.length <= 500 && /[a-zA-Z]{2,}/.test(text)) {
-            // Skip excluded elements, usernames, buttons
-            if (this.extractor._isExcluded(el) || this.extractor._isMostlyUsernames(text)) {
-              el = el.parentElement;
-              depth++;
-              continue;
-            }
-            const cleaned = text.substring(0, 300);
-            if (cleaned === this.lastText) return; // already showing this
-            this.lastText = cleaned;
-            this._clickLocked = false; // Hover overrides click lock
+          const result = this._smartExtract(el, e.clientX, e.clientY);
+          if (result) {
+            if (result.cleaned === this.lastText) return;
+            this.lastText = result.cleaned;
+            this._clickLocked = false;
             this._hoverLocked = true;
-            this._highlightElement(el);
-            this._translateText(cleaned);
+            this._highlightElement(result.targetEl);
+            this._translateText(result.cleaned);
             return;
           }
           el = el.parentElement;
           depth++;
         }
-      }, 120); // 120ms debounce — fast enough to feel instant, slow enough to skip fly-overs
+      }, 120);
     }
 
     // ---- Instagram: scroll listener for comment container ----
