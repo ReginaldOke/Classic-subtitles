@@ -9,6 +9,7 @@ const STORAGE_CACHE_MAX = 1500; // Persistent cache eviction threshold
 const VALID_LANGS = new Set([
   'en','es','fr','de','it','pt','ja','ko','zh','ar','hi','ru',
   'nl','el','pl','th','tr',
+  'vi','id','sv','da','no','fi','cs','ro','uk','hu',
 ]);
 const BATCH_CONCURRENCY = 5;
 

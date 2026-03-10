@@ -4,7 +4,385 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Classic Subtitles</title>
-  <link rel="stylesheet" href="popup.css">
+  <style>
+/* ============================================
+   CLASSIC SUBTITLES - Popup Styles
+   Dark, minimal, Helvetica italic, #F1D871 gold
+   ============================================ */
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  background: #0F0F0F;
+}
+
+body {
+  width: 280px;
+  font-family: 'Helvetica Neue', Helvetica, 'Inter', Arial, sans-serif;
+  font-style: italic;
+  font-weight: 400;
+  font-size: 13px;
+  color: #F1D871;
+  background: #0F0F0F;
+  border-radius: 16px;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  /* Prevent blank flash — show immediately with correct size */
+  opacity: 0;
+  transition: opacity 0.08s ease;
+}
+
+body.ready {
+  opacity: 1;
+}
+
+.popup {
+  padding: 20px;
+}
+
+/* ---- Header ---- */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.logo {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  object-fit: contain;
+}
+
+h1 {
+  font-size: 15px;
+  font-weight: 500;
+  font-style: italic;
+  color: #F1D871;
+  letter-spacing: -0.2px;
+}
+
+/* ---- Description ---- */
+.description {
+  font-size: 12.5px;
+  font-style: italic;
+  font-weight: 400;
+  color: rgba(241, 216, 113, 0.85);
+  line-height: 1.4;
+  margin-bottom: 14px;
+}
+
+/* ---- Divider ---- */
+.divider {
+  height: 1px;
+  background: rgba(241, 216, 113, 0.1);
+  margin-bottom: 16px;
+}
+
+/* ---- Settings ---- */
+.settings {
+  transition: opacity 0.3s ease;
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+}
+
+.setting-row label {
+  font-size: 13px;
+  font-style: italic;
+  color: rgba(241, 216, 113, 0.82);
+  flex-shrink: 0;
+}
+
+/* ---- Custom Language Dropdown ---- */
+.lang-select {
+  position: relative;
+}
+
+.lang-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(241, 216, 113, 0.06);
+  color: #F1D871;
+  border: 1px solid rgba(241, 216, 113, 0.12);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-family: inherit;
+  font-style: italic;
+  font-size: 12px;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.2s;
+  white-space: nowrap;
+}
+
+.lang-trigger:hover {
+  border-color: rgba(241, 216, 113, 0.3);
+}
+
+.lang-select.open .lang-trigger {
+  border-color: rgba(241, 216, 113, 0.5);
+}
+
+.lang-chevron {
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+
+.lang-select.open .lang-chevron {
+  transform: rotate(180deg);
+}
+
+.lang-dropdown {
+  display: none;
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 160px;
+  background: #1a1a1a;
+  border: 1px solid rgba(241, 216, 113, 0.15);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+  z-index: 100;
+  overflow: hidden;
+}
+
+.lang-select.open .lang-dropdown {
+  display: block;
+}
+
+.lang-search {
+  width: 100%;
+  padding: 8px 10px;
+  background: rgba(241, 216, 113, 0.04);
+  border: none;
+  border-bottom: 1px solid rgba(241, 216, 113, 0.08);
+  color: #F1D871;
+  font-family: inherit;
+  font-style: italic;
+  font-size: 12px;
+  outline: none;
+}
+
+.lang-search::placeholder {
+  color: rgba(241, 216, 113, 0.35);
+  font-style: italic;
+}
+
+.lang-list {
+  max-height: 200px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.lang-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.lang-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.lang-list::-webkit-scrollbar-thumb {
+  background: rgba(241, 216, 113, 0.15);
+  border-radius: 2px;
+}
+
+.lang-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-style: italic;
+  color: rgba(241, 216, 113, 0.75);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.lang-option:hover {
+  background: rgba(241, 216, 113, 0.08);
+  color: #F1D871;
+}
+
+.lang-option.selected {
+  color: #F1D871;
+  font-weight: 500;
+}
+
+.lang-option .check {
+  font-size: 11px;
+  opacity: 0;
+  font-style: normal;
+  transition: opacity 0.15s ease;
+}
+
+.lang-option.selected .check {
+  opacity: 1;
+}
+
+.lang-empty {
+  padding: 12px 10px;
+  font-size: 11px;
+  font-style: italic;
+  color: rgba(241, 216, 113, 0.35);
+  text-align: center;
+}
+
+/* ---- Range Slider ---- */
+.range-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.range-value {
+  font-size: 12px;
+  color: #F1D871;
+  min-width: 36px;
+  text-align: right;
+  font-weight: 500;
+  font-style: italic;
+}
+
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100px;
+  height: 3px;
+  background: rgba(241, 216, 113, 0.12);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  background: #F1D871;
+  border-radius: 50%;
+  cursor: pointer;
+  border: none;
+  box-shadow: 0 0 6px rgba(241, 216, 113, 0.25);
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  background: #F1D871;
+  border-radius: 50%;
+  cursor: pointer;
+  border: none;
+}
+
+/* ---- Toggle Switch ---- */
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.toggle-switch.small {
+  width: 36px;
+  height: 20px;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider {
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 24px;
+  cursor: pointer;
+  transition: background 0.3s;
+}
+
+.slider::before {
+  content: '';
+  position: absolute;
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 50%;
+  transition: transform 0.3s ease, background 0.3s ease;
+}
+
+.toggle-switch.small .slider::before {
+  height: 14px;
+  width: 14px;
+}
+
+input:checked + .slider {
+  background: rgba(241, 216, 113, 0.15);
+}
+
+input:checked + .slider::before {
+  background: #F1D871;
+  transform: translateX(20px);
+  box-shadow: 0 0 8px rgba(241, 216, 113, 0.35);
+}
+
+.toggle-switch.small input:checked + .slider::before {
+  transform: translateX(16px);
+}
+
+/* ---- Status ---- */
+.status {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(241, 216, 113, 0.06);
+  font-size: 11px;
+  font-style: italic;
+  color: rgba(241, 216, 113, 0.5);
+  text-align: center;
+}
+
+.status::before {
+  content: '';
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #F1D871;
+  margin-right: 6px;
+  vertical-align: middle;
+  box-shadow: 0 0 4px rgba(241, 216, 113, 0.5);
+}
+
+.status.paused::before {
+  background: #444;
+  box-shadow: none;
+}
+  </style>
 </head>
 <body>
   <div class="popup">
@@ -27,26 +405,19 @@
     <div class="settings" id="settings">
       <!-- Target Language -->
       <div class="setting-row">
-        <label for="targetLang">Language</label>
-        <select id="targetLang">
-          <option value="ar">Arabic</option>
-          <option value="zh">Chinese</option>
-          <option value="nl">Dutch</option>
-          <option value="en">English</option>
-          <option value="fr">French</option>
-          <option value="de">German</option>
-          <option value="el">Greek</option>
-          <option value="hi">Hindi</option>
-          <option value="it">Italian</option>
-          <option value="ja">Japanese</option>
-          <option value="ko">Korean</option>
-          <option value="pl">Polish</option>
-          <option value="pt">Portuguese</option>
-          <option value="ru">Russian</option>
-          <option value="es">Spanish</option>
-          <option value="th">Thai</option>
-          <option value="tr">Turkish</option>
-        </select>
+        <label>Language</label>
+        <div class="lang-select" id="langSelect">
+          <button class="lang-trigger" type="button" id="langTrigger">
+            <span id="langLabel">Spanish</span>
+            <svg class="lang-chevron" viewBox="0 0 10 6" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M1 1L5 5L9 1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+          <div class="lang-dropdown" id="langDropdown">
+            <input class="lang-search" type="text" placeholder="Search languages..." id="langSearch" autocomplete="off">
+            <div class="lang-list" id="langList"></div>
+          </div>
+        </div>
       </div>
 
       <!-- Font Size -->
