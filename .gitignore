@@ -1,3 +1,4 @@
 .DS_Store
+*.zip
 *.png
-\!icons/*.png
+!icons/*.png

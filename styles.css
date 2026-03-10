@@ -18,25 +18,30 @@
   flex-direction: column;
   justify-content: flex-end;
   align-items: center;
-  padding: 24px 16px 24px;
+  padding: 40px 16px 24px;
   gap: 4px;
   z-index: 2147483647;
   pointer-events: none;
   /* Background off by default — JS applies gradient when showBackground is on */
   background: none;
   opacity: 0;
-  transition: opacity 0.4s ease;
+  transition: opacity 0.3s ease, max-height 0.3s ease, padding 0.25s ease;
 }
 
 #ss-overlay.ss-visible {
   opacity: 1 !important;
 }
 
-/* When translation text is expanded, let the overlay grow to accommodate */
+/* When translation text is expanded ("see more"), overlay grows smoothly */
 #ss-overlay.ss-content-expanded {
   max-height: 80vh;
   overflow-y: auto;
   pointer-events: auto;
+}
+
+/* Transition the overlay max-height only during expand (not on initial show) */
+#ss-overlay.ss-expanding {
+  transition: opacity 0.3s ease, max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1), padding 0.25s ease;
 }
 
 /* Original text (English) — hidden by default */
@@ -52,6 +57,7 @@
   color: #FFFFFF;
   -webkit-text-stroke: 0.5px #000000;
   paint-order: stroke fill;
+  transition: opacity 0.25s ease;
 }
 
 /* Row wrapper: translation text + TTS button side by side */
@@ -81,6 +87,7 @@
   /* 3-line truncation */
   max-height: calc(3 * 29px); /* 3 × line-height */
   overflow: hidden;
+  transition: max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.25s ease;
 }
 
 #ss-translation.ss-expanded {
@@ -89,26 +96,36 @@
   pointer-events: auto;
 }
 
+/* Button group: mute + chevron side by side to the right of text */
+#ss-btn-group {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
 /* TTS mute/unmute button */
 #ss-tts-btn {
   flex: 0 0 auto;
-  width: 36px;
-  height: 36px;
-  padding: 4px !important;
+  width: 40px;
+  height: 40px;
+  padding: 2px !important;
   background: none !important;
-  border: none !important;
+  border: 1px solid #F1D871 !important;
+  border-radius: 8px;
   cursor: pointer;
   pointer-events: auto;
   color: #F1D871;
   opacity: 0.7;
-  transition: opacity 0.2s ease, transform 0.15s ease;
+  transition: opacity 0.25s ease, transform 0.15s ease;
   font-style: normal !important;
   -webkit-text-stroke: 0 !important;
 }
 
 #ss-tts-btn:hover {
   opacity: 1;
-  transform: scale(1.15);
+  transform: scale(1.08);
 }
 
 #ss-tts-btn:active {
@@ -121,47 +138,32 @@
   display: block;
 }
 
-/* "see more" / "see less" link — positioned at bottom-right of translation when collapsed */
+/* "see more" / "see less" — inline at end of (truncated) text */
 #ss-see-more-btn {
   display: none;
-  position: absolute;
-  bottom: 0;
-  right: 0;
-  /* Background gradient set dynamically by JS (_syncSeeMoreBg) for dark/light adaptation */
-  background: linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.7) 30%);
-  border: none !important;
+  background: none !important;
   cursor: pointer;
   pointer-events: auto;
   color: #F1D871;
   font-family: 'Helvetica Neue', Helvetica, 'Inter', Arial, sans-serif !important;
-  font-style: italic !important;
+  font-style: normal !important;
   font-weight: 700;
   font-size: inherit;
   line-height: inherit;
-  text-decoration: underline !important;
-  text-decoration-color: #F1D871 !important;
-  text-decoration-thickness: 2px !important;
-  text-underline-offset: 4px;
-  -webkit-text-stroke: 0 !important;
+  text-decoration: none !important;
+  -webkit-text-stroke: 1.8px #000000;
   paint-order: stroke fill;
   white-space: nowrap;
-  padding: 0 4px 0 24px !important;
-  margin: 0;
-  transition: opacity 0.2s ease;
+  padding: 0 0 2px 0 !important;
+  margin: 0 0 0 12px;
+  border: none !important;
+  border-bottom: 2px solid #F1D871 !important;
+  border-radius: 0 !important;
   opacity: 0.9;
-  filter: drop-shadow(0px 0px 1px #000) drop-shadow(0px 0px 1px #000) drop-shadow(0px 0px 1px #000);
 }
 
 #ss-see-more-btn:hover {
   opacity: 1;
-}
-
-/* When expanded, "see less" sits inline at end of text flow */
-#ss-translation.ss-expanded #ss-see-more-btn {
-  position: static;
-  display: inline !important;
-  padding: 0 0 0 8px !important;
-  background: none !important;
 }
 
 /* Close button — absolute on page, anchored to highlighted text (scrolls with it) */
@@ -172,16 +174,15 @@
   height: 18px;
   padding: 0 !important;
   /* background set by JS: rgba(0,0,0,0.75) on dark, rgba(255,255,255,0.75) on light */
-  border: none !important;
+  border: 1.5px solid #F1D871 !important;
   border-radius: 50%;
   cursor: pointer;
   pointer-events: auto;
   color: #F1D871;
   font-size: 11px;
-  line-height: 18px;
-  text-align: center;
+  justify-content: center;
+  align-items: center;
   transition: opacity 0.2s ease, transform 0.15s ease;
-  font-style: normal !important;
   -webkit-text-stroke: 0 !important;
   z-index: 2147483647;
   filter: drop-shadow(0px 0px 2px rgba(0,0,0,0.5));
@@ -196,17 +197,18 @@
   transform: scale(0.95);
 }
 
-/* Collapse/expand chevron — inline in tts-row, to the right of text + TTS */
+/* Collapse/expand chevron — inside btn-group, next to the mute button */
 #ss-collapse-btn {
   flex: 0 0 auto;
+  position: relative;
   display: flex;
   justify-content: center;
   align-items: center;
-  width: 36px;
-  height: 36px;
-  padding: 0 !important;
+  width: 40px;
+  height: 40px;
+  padding: 2px !important;
   background: none !important;
-  border: 1px solid transparent !important;
+  border: 1px solid #F1D871 !important;
   border-radius: 8px;
   cursor: pointer;
   pointer-events: auto;
@@ -214,26 +216,53 @@
   opacity: 0.7;
   font-style: normal !important;
   -webkit-text-stroke: 0 !important;
-  transition: opacity 0.2s ease, background 0.3s ease, border-color 0.3s ease;
+  transition: opacity 0.2s ease, transform 0.15s ease;
 }
 
 #ss-collapse-btn:hover {
   opacity: 1;
+  transform: scale(1.08);
 }
 
+#ss-collapse-btn:active {
+  transform: scale(0.92);
+}
+
+/* Both icons stacked in same space — only one visible at a time */
 #ss-collapse-btn svg {
-  width: 100%;
-  height: 100%;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 70%;
+  height: 70%;
   flex-shrink: 0;
-  transition: transform 0.3s ease;
+  transform: translate(-50%, -50%);
+  transition: opacity 0.35s ease, transform 0.35s ease;
 }
 
-/* ---- Collapsed state: hide text, show only the chevron pill at bottom-right ---- */
+/* Chevron icon: visible by default */
+#ss-collapse-btn .ss-chevron-icon {
+  opacity: 1;
+}
+
+/* S icon: hidden by default */
+#ss-collapse-btn .ss-collapsed-icon {
+  opacity: 0;
+}
+
+/* ---- Collapsing animation: fade content out before shrinking ---- */
+#ss-overlay.ss-collapsing #ss-translation,
+#ss-overlay.ss-collapsing #ss-tts-btn,
+#ss-overlay.ss-collapsing #ss-original {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ---- Collapsed state: content hidden, only S pill visible at bottom-right ---- */
 #ss-overlay.ss-collapsed {
   min-height: 0 !important;
-  height: 0;
-  max-height: 0;
-  padding: 0;
+  max-height: 0 !important;
+  padding: 0 !important;
   gap: 0;
   background: none !important;
   overflow: visible;
@@ -242,7 +271,18 @@
 #ss-overlay.ss-collapsed #ss-translation,
 #ss-overlay.ss-collapsed #ss-tts-btn,
 #ss-overlay.ss-collapsed #ss-original {
-  display: none !important;
+  opacity: 0;
+  pointer-events: none;
+  max-height: 0;
+  overflow: hidden;
+}
+
+/* Button group becomes invisible container but allows collapse btn to escape via fixed position */
+#ss-overlay.ss-collapsed #ss-btn-group {
+  width: 0;
+  height: 0;
+  overflow: visible;
+  gap: 0;
 }
 
 /* In collapsed state, the row just holds the fixed chevron */
@@ -253,26 +293,39 @@
   overflow: visible;
 }
 
-/* In collapsed state, the button becomes fixed at bottom-right of viewport */
+/* In collapsed state, the button becomes fixed at right edge of viewport */
 #ss-overlay.ss-collapsed #ss-collapse-btn {
   position: fixed;
   top: auto;
-  bottom: 16px;
+  bottom: 40px;
   right: 16px;
   left: auto;
-  /* background set dynamically by JS (_syncCollapseBg) */
+  /* background set dynamically by JS (_syncCollapseBg) for light/dark pages */
   background: rgba(0, 0, 0, 0.6) !important;
-  border: 2px solid #F1D871 !important;
-  border-radius: 10px;
+  border: 1px solid #F1D871 !important;
+  border-radius: 8px;
   opacity: 1;
-  width: 44px;
-  height: 44px;
+  width: 40px;
+  height: 40px;
+  padding: 2px !important;
   filter: drop-shadow(0px 2px 6px rgba(0,0,0,0.4));
 }
 
-/* Rotate the chevron 180° when collapsed (points up) */
-#ss-overlay.ss-collapsed #ss-collapse-btn svg {
-  transform: rotate(180deg);
+/* Collapsed: chevron spins and fades out, S icon fades in */
+#ss-overlay.ss-collapsed #ss-collapse-btn .ss-chevron-icon {
+  opacity: 0;
+  transform: translate(-50%, -50%) rotate(360deg);
+}
+
+#ss-overlay.ss-collapsed #ss-collapse-btn .ss-collapsed-icon {
+  opacity: 1;
+}
+
+/* ---- Expanding animation: fade content back in after overlay grows ---- */
+#ss-overlay.ss-uncollapsing #ss-translation,
+#ss-overlay.ss-uncollapsing #ss-tts-btn,
+#ss-overlay.ss-uncollapsing #ss-original {
+  opacity: 0;
 }
 
 /* ---- Fullscreen support ---- */
@@ -295,11 +348,6 @@
   -webkit-text-stroke: 0.8px #000000 !important;
 }
 
-:fullscreen #ss-see-more-btn,
-:-webkit-full-screen #ss-see-more-btn {
-  filter: drop-shadow(0px 0px 2px #000) drop-shadow(0px 0px 2px #000);
-}
-
 /* ---- Responsive ---- */
 @media (max-width: 768px) {
   #ss-overlay {
@@ -317,8 +365,8 @@
   }
 
   #ss-tts-btn {
-    width: 28px;
-    height: 28px;
+    width: 32px;
+    height: 32px;
   }
 
   #ss-translation {
@@ -333,8 +381,8 @@
   }
 
   #ss-collapse-btn {
-    width: 28px;
-    height: 28px;
+    width: 32px;
+    height: 32px;
   }
 }
 
@@ -350,8 +398,8 @@
   }
 
   #ss-tts-btn {
-    width: 24px;
-    height: 24px;
+    width: 28px;
+    height: 28px;
   }
 
   #ss-translation {
@@ -366,14 +414,15 @@
   }
 
   #ss-collapse-btn {
-    width: 24px;
-    height: 24px;
+    width: 28px;
+    height: 28px;
   }
 }
 
 /* ---- Clean reset to prevent inheritance from host page ---- */
 #ss-overlay,
 #ss-tts-row,
+#ss-btn-group,
 #ss-translation,
 #ss-original,
 #ss-tts-btn,
@@ -394,6 +443,7 @@
 }
 
 #ss-tts-row,
+#ss-btn-group,
 #ss-translation,
 #ss-original,
 #ss-tts-btn,
@@ -408,13 +458,19 @@
   background: none !important;
 }
 
-/* Ensure see-more keeps its underline after reset */
+/* Close button: override the italic reset — the ✕ must be upright and centered */
+#ss-close-btn {
+  font-style: normal !important;
+}
+
+/* Ensure see-more keeps its styles after reset */
 #ss-see-more-btn {
-  text-decoration: underline !important;
-  text-decoration-color: #F1D871 !important;
-  text-decoration-thickness: 2px !important;
-  text-underline-offset: 4px !important;
-  -webkit-text-stroke: 0 !important;
+  font-style: normal !important;
+  text-decoration: none !important;
+  -webkit-text-stroke: 1.8px #000000 !important;
+  border-bottom: 2px solid #F1D871 !important;
+  border-radius: 0 !important;
+  margin: 0 0 0 12px !important;
 }
 
 /* ---- Highlight mode: outline around source text being translated ---- */
@@ -422,4 +478,5 @@
   outline: 1px solid #F1D871 !important;
   outline-offset: 2px;
   border-radius: 2px;
+  transition: outline-color 0.2s ease;
 }

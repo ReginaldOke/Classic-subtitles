@@ -6,8 +6,166 @@
 // ============================================
 (function () {
   'use strict';
-  if (window.__spanishSubtitlesLoaded) return;
-  window.__spanishSubtitlesLoaded = true;
+  if (window.__classicSubtitlesLoaded) return;
+  window.__classicSubtitlesLoaded = true;
+
+  // ========================================================
+  // SHARED UTILITY FUNCTIONS
+  // Pure functions used by TextExtractor, ClassicSubtitles, etc.
+  // ========================================================
+
+  function _getVisibleText(el) {
+    let text = '';
+    const walk = (node) => {
+      if (node.nodeType === 3) { text += node.textContent; return; }
+      if (node.nodeType !== 1) return;
+      const tag = node.tagName?.toLowerCase();
+      if (tag === 'script' || tag === 'style' || tag === 'noscript' ||
+          tag === 'template' || tag === 'svg') return;
+      if (node.getAttribute('aria-hidden') === 'true') return;
+      if (node !== el) {
+        const inlineStyle = node.getAttribute('style') || '';
+        if (/display\s*:\s*none|visibility\s*:\s*hidden|font-size\s*:\s*0/i.test(inlineStyle)) return;
+        if (/overflow\s*:\s*hidden/i.test(inlineStyle) && /height\s*:\s*0/i.test(inlineStyle)) return;
+        if (tag !== 'span' && tag !== 'br' && tag !== 'wbr' && tag !== 'a') {
+          if (node.offsetParent === null && node.offsetHeight === 0 && node.offsetWidth === 0) {
+            const s = node.style;
+            if (s && (s.display === 'none' || s.visibility === 'hidden')) return;
+            try {
+              const cs = getComputedStyle(node);
+              if (cs.display === 'none' || cs.visibility === 'hidden') return;
+            } catch {}
+          }
+        }
+        const cls = typeof node.className === 'string' ? node.className : '';
+        if (cls && /\b(sr-only|visually-hidden|screen-reader|clip-hide|a11y-hidden|assistive-text)\b/i.test(cls)) {
+          return;
+        }
+        if (/position\s*:\s*(absolute|fixed)/i.test(inlineStyle)) {
+          if (/clip\s*:/i.test(inlineStyle) || /clip-path\s*:/i.test(inlineStyle)) return;
+          if (/width\s*:\s*1px/i.test(inlineStyle) && /height\s*:\s*1px/i.test(inlineStyle)) return;
+          if (/left\s*:\s*-\d{4,}/i.test(inlineStyle) || /top\s*:\s*-\d{4,}/i.test(inlineStyle)) return;
+        }
+      }
+      for (const child of node.childNodes) walk(child);
+    };
+    walk(el);
+    return text.trim();
+  }
+
+  function _looksLikeCode(text) {
+    if (!text || text.length < 10) return false;
+    if (text.length >= 20) {
+      const codeSignals = (text.match(/===|!==|=>|\|\||;\s*\w|\.querySelector|\.addEventListener|\.className|null;|undefined;|function\s*\(|const\s+\w+=|let\s+\w+=|var\s+\w+=|\}\s*\)|\btypeof\b|\bwindow\./g) || []).length;
+      if (codeSignals >= 2) return true;
+    }
+    const tokens = text.split(/\s+/);
+    let garbledTokens = 0;
+    for (const tok of tokens) {
+      if (tok.length < 5) continue;
+      // Skip tokens that look like financial/unit notation (e.g. $48K/year, ~$30K/year, 0.75%)
+      if (/^[~$€£¥₹]/.test(tok) || /\d[KkMmBb%]/.test(tok) || /\/\w{2,}$/.test(tok)) continue;
+      const hasLetters = /[a-zA-Z]/.test(tok);
+      const hasDigits = /\d/.test(tok);
+      if (hasLetters && hasDigits) {
+        const digitRatio = (tok.match(/\d/g) || []).length / tok.length;
+        if (digitRatio > 0.15 && digitRatio < 0.85 && tok.length > 6) garbledTokens++;
+      }
+      if (tok.length > 10 && hasLetters) {
+        const vowelRatio = (tok.match(/[aeiouAEIOU]/g) || []).length / tok.length;
+        if (vowelRatio < 0.1) garbledTokens++;
+      }
+    }
+    // Scale threshold with text length — long prose with a few mixed tokens isn't code
+    const threshold = tokens.length > 30 ? 5 : tokens.length > 15 ? 4 : 2;
+    if (garbledTokens >= threshold) return true;
+    if (garbledTokens >= 1 && tokens.length <= 2) return true;
+    if (text.length > 20 && !text.includes(' ') && !/^https?:\/\//.test(text)) return true;
+    return false;
+  }
+
+  function _hasConcatenatedActions(text) {
+    if (!text) return false;
+    const t = text.trim();
+    if (/(?:Like|Comment|Share|Save|Send|Reply|Repost|Follow)\d*(?:Like|Comment|Share|Save|Send|Reply|Repost|Follow|[A-Z])/i.test(t)) return true;
+    if (/(?:Search|Info|Shopping|Subscribe|Upcoming|Cancel|Play now)\w*(?:Search|Info|Shopping|Subscribe|Upcoming|Cancel|Play now|[A-Z])/i.test(t)) return true;
+    const uiWordPattern = /^(?:Previous|Next|Back|Forward|Close|Open|Cancel|Submit|Loading|Search|Filter|Sort|Menu|Tools|Settings|Options|More|Less|View|Edit|Delete|Remove|Add|New|Save|Undo|Redo|Refresh|Home|Up|Down|Left|Right|First|Last|Show|Hide|Toggle|Select|Clear|Reset|Apply|Done|Skip|Play|Pause|Stop|Mute|Unmute|Pro|Plus|Premium|Free|Upgrade|Sign|Log|Login|Logout|Profile|Account|Help|Info|About|Contact|Privacy|Terms|Accept|Decline|Dismiss|Learn|Read|Watch|Listen|Download|Upload|Import|Export|Copy|Paste|Print|Zoom|Expand|Collapse|Minimize|Maximize|Fullscreen|Exit|Shared|Public|Friends|Everyone){2,}$/i;
+    for (const word of t.split(/\s+/)) {
+      if (word.length > 5 && uiWordPattern.test(word)) return true;
+    }
+    const camelRuns = t.match(/[A-Z][a-z]{2,}(?=[A-Z])/g);
+    if (camelRuns && camelRuns.length >= 2) {
+      const joined = t.replace(/\s+/g, '');
+      if (joined.length < 30) return true;
+    }
+    if (camelRuns && camelRuns.length >= 3) return true;
+    return false;
+  }
+
+  function _isNonContentText(text) {
+    if (!text) return true;
+    const t = text.trim();
+    if (t.length < 3) return true;
+    const metadataPattern = /^(shared with (public|friends|everyone|friends of friends)|public(ly)?|friends only|only me|see more|see less|view all|load more|show more|show less|edited|pinned|sponsored|promoted|suggested for you|suggested|recommended|verified|following|follow|unfollow|liked?|comment|share|send|saved?|reply|retweet|repost|quote|bookmark|report|block|mute|hide|not interested|turn on notifications|see translation|translate tweet|translated by|original|view translation|view original|most relevant|newest first|all comments|people also viewed|you might like|add a comment|write a comment|log in|sign up|sign in|create account|learn more|read more|view more|shop now|see all|sell|buy|post|x|×|\.\.\.)$/i;
+    if (metadataPattern.test(t)) return true;
+    if (/^shared with\b/i.test(t) && t.length < 40) return true;
+    if (/^\d[\d.,KkMmBb]*\s*(comments?|shares?|likes?|views?|reactions?|replies?|retweets?|reposts?|followers?|following)?\s*$/i.test(t)) return true;
+    if (/^(\d+[smhdw]|just now|yesterday|today|\d+ (?:seconds?|minutes?|hours?|days?|weeks?|months?|years?) ago)$/i.test(t)) return true;
+    if (/^view\s+(all\s+)?\d+\s+(replies|comments|likes)/i.test(t)) return true;
+    if (/^view\s+replies\s*\(\d+\)/i.test(t)) return true;
+    if (/^liked by\b/i.test(t) && t.length < 80) return true;
+    if (/^\d+\s+[wdhms]$/i.test(t)) return true;
+    if (/^(original audio|suggested post|suggested reel|audio|reel|reels?)$/i.test(t)) return true;
+    if (/^followed by\b/i.test(t) && t.length < 60) return true;
+    if (/^ver\s+(respuestas|comentarios|todo)\s*\(?/i.test(t)) return true;
+    // Cookie consent, privacy, and legal boilerplate
+    if (/\bcookies?\b/i.test(t) && /\b(policy|consent|accept|manage|preferences?|experience|analytics|tracking)\b/i.test(t)) return true;
+    if (/\b(privacy policy|terms of (service|use)|cookie policy|data protection|GDPR|CCPA)\b/i.test(t) && t.length < 300) return true;
+    return false;
+  }
+
+  function _cleanExtractedText(text) {
+    if (!text) return text;
+    return text
+      .replace(/https?:\/\/\S+/g, '')
+      .replace(/www\.\S+/g, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+  }
+
+  // Clean Instagram caption: strip leading reaction counts (e.g. "2.3K40") and username
+  // Instagram's DOM often concatenates likes, comments, username, and caption text
+  function _cleanInstagramCaption(text) {
+    if (!text) return text;
+    let t = text;
+    // Strip leading reaction counts: numbers with optional K/M suffix, concatenated
+    // e.g. "2.3K40" or "1,234567" (likes+comments stuck together)
+    t = t.replace(/^[\d.,]+[KkMm]?[\d.,]*[KkMm]?\s*/, '');
+    // Strip leading username (single word with no spaces, possibly with emoji/verified badge)
+    // Instagram usernames: letters, digits, dots, underscores — followed by caption
+    t = t.replace(/^[a-zA-Z0-9._]{2,30}(?=\s*[A-Z\u00C0-\u024F\u0400-\u04FF\u4E00-\u9FFF])/, '');
+    return t.replace(/\s{2,}/g, ' ').trim();
+  }
+
+  // Detect login, auth, payment, and checkout pages where subtitles should not appear
+  function _isRestrictedPage() {
+    const url = window.location.href.toLowerCase();
+    const host = window.location.hostname.toLowerCase();
+    const path = window.location.pathname.toLowerCase();
+
+    // Restricted subdomains
+    if (/^(accounts?|login|signin|sign-in|auth|checkout|pay|payment|billing)\./i.test(host)) return true;
+
+    // Restricted URL path patterns
+    const restrictedPaths = /\/(log[-_]?in|sign[-_]?in|sign[-_]?up|register|auth(enticate)?|oauth|sso|checkout|payment|billing|pay|purchase|order|cart\/checkout|account\/security|reset[-_]?password|forgot[-_]?password|2fa|mfa|verify[-_]?email|confirm[-_]?account)\b/;
+    if (restrictedPaths.test(path)) return true;
+
+    // Restricted query parameters (e.g. ?action=login)
+    const search = window.location.search.toLowerCase();
+    if (/[?&](action|mode|flow)=(login|signin|sign_in|signup|sign_up|checkout|payment)\b/.test(search)) return true;
+
+    return false;
+  }
 
   // ========================================================
   // SUBTITLE OVERLAY (gradient + yellow text)
@@ -71,15 +229,21 @@
       // Collapse/expand chevron — sits to the right of the text in the tts row
       this.collapseBtn = document.createElement('button');
       this.collapseBtn.id = 'ss-collapse-btn';
-      this.collapseBtn.innerHTML = `<svg width="40" height="40" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M17.9999 9.37311C18.0017 9.2646 17.9711 9.15802 17.9119 9.06701C17.8528 8.976 17.7679 8.90469 17.6681 8.8622C17.5682 8.8197 17.4579 8.80796 17.3514 8.82846C17.2448 8.84896 17.1468 8.90079 17.0698 8.9773L11.9994 13.8772L6.92897 8.9773C6.87763 8.92659 6.81674 8.88657 6.74984 8.85955C6.68293 8.83254 6.61133 8.81906 6.53918 8.8199C6.46703 8.82075 6.39579 8.8359 6.32953 8.86447C6.26328 8.89305 6.20333 8.93448 6.1532 8.98638C6.10307 9.03827 6.06373 9.09959 6.03746 9.1668C6.01119 9.234 5.9985 9.30575 6.00015 9.37788C6.0018 9.45002 6.01775 9.52111 6.04706 9.58704C6.07637 9.65298 6.11846 9.71244 6.17091 9.76199L11.6201 15.0279C11.7218 15.1263 11.8578 15.1813 11.9994 15.1813C12.1409 15.1813 12.2769 15.1263 12.3787 15.0279L17.8278 9.76199C17.8811 9.71199 17.9238 9.65181 17.9533 9.58501C17.9829 9.51821 17.9987 9.44615 17.9999 9.37311Z" fill="#F1D871" stroke="#000000" stroke-width="1.2" paint-order="stroke fill"/></svg>`;
+      // Chevron icon (visible when expanded) + S icon (visible when collapsed)
+      this.collapseBtn.innerHTML = `<svg class="ss-chevron-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M19.9999 8.69716C20.0023 8.56072 19.9614 8.42673 19.8826 8.31229C19.8038 8.19786 19.6906 8.1082 19.5574 8.05477C19.4243 8.00134 19.2772 7.98657 19.1351 8.01235C18.993 8.03813 18.8623 8.10329 18.7597 8.1995L11.9992 14.3603L5.23861 8.1995C5.17017 8.13574 5.08898 8.08542 4.99977 8.05145C4.91056 8.01748 4.8151 8.00054 4.7189 8.0016C4.6227 8.00266 4.52771 8.0217 4.43937 8.05763C4.35103 8.09356 4.2711 8.14566 4.20426 8.21091C4.13742 8.27615 4.08497 8.35326 4.04994 8.43775C4.01491 8.52225 3.99799 8.61246 4.00019 8.70316C4.00239 8.79386 4.02365 8.88324 4.06273 8.96614C4.10181 9.04904 4.15794 9.12381 4.22788 9.18611L11.4934 15.8071C11.6291 15.9308 11.8105 16 11.9992 16C12.1879 16 12.3692 15.9308 12.5049 15.8071L19.7705 9.18611C19.8415 9.12325 19.8984 9.04757 19.9378 8.96358C19.9772 8.87959 19.9983 8.78899 19.9999 8.69716Z" fill="#F1D871" stroke="#000000" stroke-width="1.5" paint-order="stroke fill"/></svg><svg class="ss-collapsed-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M15.5095 8.53716C15.5095 7.8064 15.2681 7.25279 14.7853 6.87633C14.3026 6.49545 13.6493 6.30501 12.8256 6.30501C12.2232 6.30501 11.6807 6.40244 11.1979 6.59731C10.7152 6.79218 10.321 7.06013 10.0154 7.40116C9.70984 7.74218 9.52162 8.12971 9.45076 8.56374C9.39318 8.9269 9.43083 9.23914 9.56369 9.50045C9.69656 9.75732 9.88479 9.97212 10.1284 10.1448C10.3764 10.3131 10.6421 10.4527 10.9256 10.5634C11.209 10.6697 11.4703 10.756 11.7095 10.8225L13.0381 11.1945C13.3703 11.2875 13.7401 11.4159 14.1476 11.5798C14.555 11.7437 14.9359 11.9673 15.2902 12.2508C15.6445 12.5298 15.9147 12.8885 16.1007 13.327C16.2912 13.7655 16.3332 14.3036 16.2269 14.9413C16.1029 15.6765 15.7996 16.3408 15.3168 16.9343C14.8385 17.5278 14.2052 17.9995 13.4168 18.3493C12.6329 18.6992 11.7183 18.8742 10.6731 18.8742C9.69877 18.8742 8.87943 18.7169 8.2151 18.4025C7.55519 18.088 7.06802 17.6496 6.75357 17.0871C6.44355 16.5246 6.32397 15.8714 6.39483 15.1273H8.09552C8.05123 15.6411 8.15309 16.0663 8.40111 16.4029C8.64913 16.735 8.99458 16.983 9.43747 17.1469C9.88036 17.3063 10.372 17.3861 10.9123 17.3861C11.5412 17.3861 12.1214 17.2842 12.6528 17.0805C13.1887 16.8723 13.6316 16.5844 13.9815 16.2168C14.3358 15.8448 14.5528 15.4108 14.6325 14.9148C14.7123 14.463 14.6503 14.0954 14.4465 13.812C14.2428 13.5285 13.9483 13.2982 13.563 13.1211C13.1777 12.9439 12.7547 12.7889 12.2941 12.656L10.6997 12.1777C9.68991 11.8721 8.9215 11.4359 8.39447 10.869C7.87186 10.3021 7.68363 9.56023 7.82979 8.64346C7.96265 7.88169 8.28375 7.21736 8.79307 6.65046C9.30239 6.07914 9.9335 5.63625 10.6864 5.3218C11.4393 5.00292 12.2498 4.84348 13.1179 4.84348C13.9948 4.84348 14.7455 5.00292 15.37 5.3218C15.9944 5.63625 16.4595 6.07249 16.7651 6.63053C17.0706 7.18414 17.1836 7.81969 17.1039 8.53716H15.5095Z" fill="#F1D871" stroke="#000000" stroke-width="1.5" paint-order="stroke fill"/></svg>`;
       this.collapseBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         this._toggleCollapse();
       });
 
+      // Button group: chevron (top) + mute (bottom), stacked vertically to the right of text
+      this.btnGroup = document.createElement('div');
+      this.btnGroup.id = 'ss-btn-group';
+      this.btnGroup.appendChild(this.ttsButton);
+      this.btnGroup.appendChild(this.collapseBtn);
+
       this.ttsRow.appendChild(this.translationEl);
-      this.ttsRow.appendChild(this.ttsButton);
-      this.ttsRow.appendChild(this.collapseBtn);
+      this.ttsRow.appendChild(this.btnGroup);
 
       this.originalEl = document.createElement('div');
       this.originalEl.id = 'ss-original';
@@ -95,6 +259,9 @@
       this.closeBtn.style.display = 'none';
       this.closeBtn.addEventListener('click', (e) => {
         e.stopPropagation();
+        e.preventDefault();
+        // Immediately hide — failsafe before async callback
+        this.closeBtn.style.display = 'none';
         if (this._onClose) this._onClose();
       });
       document.body.appendChild(this.closeBtn);
@@ -124,31 +291,16 @@
       return labels[lang] || labels.en;
     }
 
-    // ---- TTS: inline SVG icons ----
+    // ---- TTS: inline SVG icons (from icons/Mute.svg and icons/Unmute.svg) ----
+    // Black stroke behind gold fill via paint-order for visibility on light backgrounds
     _ttsIcon(on) {
-      // Speaker body — shared between both states
-      // Black outline behind via paint-order, then gold fill on top
-      const speaker = `<path d="M11 5L6 9H2v6h4l5 4V5z" fill="currentColor" stroke="#000000" stroke-width="2.4" stroke-linejoin="round" paint-order="stroke fill"/>`;
+      const S = 'stroke="#000000" stroke-width="1.5" paint-order="stroke fill"';
       if (on) {
-        // Speaker with sound waves (unmuted)
-        // Each arc: black outline underneath, then gold arc on top
-        return `<svg viewBox="-1 -1 26 26" overflow="visible" fill="none" xmlns="http://www.w3.org/2000/svg">
-          ${speaker}
-          <path d="M15.54 8.46a5 5 0 010 7.07" stroke="#000000" stroke-width="4.4" stroke-linecap="round"/>
-          <path d="M15.54 8.46a5 5 0 010 7.07" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-          <path d="M19.07 4.93a10 10 0 010 14.14" stroke="#000000" stroke-width="4.4" stroke-linecap="round"/>
-          <path d="M19.07 4.93a10 10 0 010 14.14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>`;
+        // Unmuted — speaker with sound wave arcs (Mute.svg)
+        return `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M10.5489 18.5731C11.4748 19.4893 13.047 18.8332 13.047 17.531V6.47013C13.047 5.16624 11.4748 4.51021 10.5489 5.428L7.591 8.35642H4.88015C4.07034 8.35642 3.41431 9.01245 3.41431 9.82227V14.1771C3.41431 14.9869 4.07034 15.6429 4.88015 15.6429H7.591L10.5489 18.5731ZM11.7906 17.531C11.7906 17.7158 11.5664 17.8107 11.4339 17.6799L8.29282 14.5698C8.17503 14.452 8.01634 14.3866 7.8511 14.3866H4.88013C4.76397 14.3866 4.67072 14.2934 4.67072 14.1772V9.82238C4.67072 9.70623 4.76397 9.61297 4.88013 9.61297H7.8511L7.97216 9.60152C8.09159 9.57698 8.20448 9.51808 8.29282 9.43138L11.4339 6.32136C11.5664 6.19048 11.7906 6.28373 11.7906 6.47023L11.7906 17.531Z" fill="#F1D871" ${S}/><path d="M17.9502 18.3964C18.2431 18.5797 18.6308 18.4897 18.8156 18.1969C19.9363 16.4005 20.5858 14.2754 20.5858 11.9997C20.5858 9.72398 19.9363 7.5988 18.8156 5.80418C18.6308 5.50971 18.243 5.41973 17.9502 5.60459C17.6557 5.78782 17.5658 6.17556 17.749 6.47003C18.7502 8.07165 19.3293 9.96615 19.3293 11.9996C19.3293 14.0331 18.7502 15.9276 17.749 17.5309C17.5658 17.8237 17.6557 18.2116 17.9502 18.3964Z" fill="#F1D871" ${S}/><path d="M15.4766 15.9064C15.7842 16.0684 16.1637 15.9489 16.3257 15.643C16.9097 14.5322 17.2353 13.2986 17.2353 11.9997C17.2353 10.7007 16.9097 9.46714 16.3257 8.35796C16.1637 8.05039 15.7842 7.93098 15.4766 8.09293C15.1707 8.25489 15.0513 8.63446 15.2132 8.94199C15.7073 9.88105 15.9789 10.915 15.9789 11.9997C15.9789 13.0843 15.7073 14.1183 15.2132 15.059C15.0513 15.3649 15.1707 15.7444 15.4766 15.9064Z" fill="#F1D871" ${S}/></svg>`;
       }
-      // Speaker with X (muted)
-      // Each line: black outline underneath, then gold line on top
-      return `<svg viewBox="-1 -1 26 26" overflow="visible" fill="none" xmlns="http://www.w3.org/2000/svg">
-        ${speaker}
-        <line x1="22" y1="9" x2="16" y2="15" stroke="#000000" stroke-width="4.4" stroke-linecap="round"/>
-        <line x1="22" y1="9" x2="16" y2="15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        <line x1="16" y1="9" x2="22" y2="15" stroke="#000000" stroke-width="4.4" stroke-linecap="round"/>
-        <line x1="16" y1="9" x2="22" y2="15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-      </svg>`;
+      // Muted — speaker with X (Unmute.svg)
+      return `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M10.9681 18.5731C11.894 19.4893 13.4662 18.8332 13.4662 17.531V6.47013C13.4662 5.16624 11.894 4.51021 10.9681 5.428L8.01019 8.35642H5.29934C4.48953 8.35642 3.8335 9.01245 3.8335 9.82227V14.1771C3.8335 14.9869 4.48953 15.6429 5.29934 15.6429H8.01019L10.9681 18.5731ZM12.2098 17.531C12.2098 17.7158 11.9856 17.8107 11.8531 17.6799L8.71201 14.5698C8.59422 14.452 8.43553 14.3866 8.27029 14.3866H5.29932C5.18316 14.3866 5.08991 14.2934 5.08991 14.1772V9.82238C5.08991 9.70623 5.18316 9.61297 5.29932 9.61297H8.27029L8.39135 9.60152C8.51078 9.57698 8.62367 9.51808 8.71201 9.43138L11.8531 6.32136C11.9856 6.19048 12.2098 6.28373 12.2098 6.47023L12.2098 17.531Z" fill="#F1D871" ${S}/><path d="M19.0956 14.1197C19.3394 14.3634 19.7385 14.3634 19.9823 14.1197C20.2277 13.8743 20.2277 13.4751 19.9823 13.2313L18.752 11.9994L19.9823 10.7692C20.2277 10.5238 20.2277 10.1246 19.9823 9.88082C19.7385 9.63542 19.3393 9.63542 19.0956 9.88082L17.8637 11.1111L16.6318 9.88082C16.388 9.63542 15.9888 9.63542 15.7451 9.88082C15.4997 10.1246 15.4997 10.5238 15.7451 10.7692L16.9753 11.9994L15.7451 13.2313C15.4997 13.4751 15.4997 13.8743 15.7451 14.1197C15.9888 14.3634 16.388 14.3634 16.6318 14.1197L17.8637 12.8878L19.0956 14.1197Z" fill="#F1D871" ${S}/></svg>`;
     }
 
     // ---- TTS: initialise voices ----
@@ -168,7 +320,7 @@
           }
         }
       } catch (err) {
-        console.warn('[CS] TTS init error:', err);
+        // TTS init error silenced for production
       }
     }
 
@@ -208,15 +360,15 @@
           text: text.trim(),
           lang: this._ttsLang || 'es',
           rate: 0.9,
-        });
+        }, () => void chrome.runtime.lastError);
       } catch (err) {
-        console.warn('[CS] chrome.tts fallback error:', err);
+        void err;
       }
     }
 
     _stopChrome() {
       try {
-        chrome.runtime.sendMessage({ type: 'tts-stop' });
+        chrome.runtime.sendMessage({ type: 'tts-stop' }, () => void chrome.runtime.lastError);
       } catch {}
     }
 
@@ -235,7 +387,7 @@
         utter.rate = 0.9;
         utter.volume = 1.0;
         utter.onerror = (e) => {
-          console.warn('[CS] Web TTS utterance error:', e.error);
+          void e;
           // If web speech fails, switch to chrome.tts for future calls
           this._ttsMethod = 'chrome';
           this._speakChrome(text);
@@ -253,7 +405,7 @@
         }, 200);
         return true;
       } catch (err) {
-        console.warn('[CS] Web TTS error:', err);
+        void err;
         return false;
       }
     }
@@ -292,9 +444,10 @@
       // Persist state
       try {
         chrome.storage.sync.get('ssSettings', (data) => {
+          if (chrome.runtime.lastError) return;
           const s = data.ssSettings || {};
           s.ttsEnabled = this.ttsEnabled;
-          chrome.storage.sync.set({ ssSettings: s });
+          chrome.storage.sync.set({ ssSettings: s }, () => void chrome.runtime.lastError);
         });
       } catch {}
     }
@@ -307,20 +460,40 @@
 
       if (!this.showBackground) {
         this.container.style.background = 'none';
+        // No overlay background — give buttons a fill so they're visible
+        this._syncBtnFill(bg);
       } else {
         const clear = this._toTransparent(bg);
-        // Gradient fades over 28px, then 12px+ of solid background before text starts
+        // Gradient fades over 36px, then 4px of solid background before text starts
         // (padding-top is 40px, so text begins at 40px from top)
         this.container.style.background =
-          `linear-gradient(180deg, ${clear} 0px, ${bg} 28px)`;
+          `linear-gradient(180deg, ${clear} 0px, ${bg} 36px)`;
+        // Overlay provides background — buttons don't need fill or shadow
+        for (const btn of [this.ttsButton, this.collapseBtn]) {
+          if (!btn || (btn === this.collapseBtn && this._collapsed)) continue;
+          btn.style.background = '';
+          btn.style.filter = '';
+        }
       }
 
       // Always adapt original text color to page background
       this._syncOriginalColor(bg);
+    }
 
-      // Adapt see-more gradient if visible
-      if (this.seeMoreBtn && this.seeMoreBtn.style.display !== 'none') {
-        this._syncSeeMoreBg();
+    // Give mute + collapse buttons the same styling as the collapsed S button
+    // (semi-transparent fill + drop-shadow) when overlay background is off
+    _syncBtnFill(bg) {
+      if (!bg) bg = this._detectBg();
+      const m = bg.match(/rgba?\(\s*(\d+),\s*(\d+),\s*(\d+)/);
+      const lum = m ? (parseInt(m[1], 10) * 299 + parseInt(m[2], 10) * 587 + parseInt(m[3], 10) * 114) / 1000 : 0;
+      const fill = lum > 128
+        ? 'rgba(255, 255, 255, 0.65)'
+        : 'rgba(0, 0, 0, 0.6)';
+      const shadow = 'drop-shadow(0px 2px 6px rgba(0,0,0,0.4))';
+      for (const btn of [this.ttsButton, this.collapseBtn]) {
+        if (!btn || (btn === this.collapseBtn && this._collapsed)) continue;
+        btn.style.setProperty('background', fill, 'important');
+        btn.style.filter = shadow;
       }
     }
 
@@ -387,139 +560,318 @@
     show(translation, original = '') {
       if (!this.container) return;
 
-      // Reset expand state
+      // Reset expand state & cancel any pending expand/collapse timer
       this._expanded = false;
+      if (this._expandTimer) { clearTimeout(this._expandTimer); this._expandTimer = null; }
+      this._fullText = translation; // store full text for expand/collapse
       this.translationEl.classList.remove('ss-expanded');
-      this.container.classList.remove('ss-content-expanded');
-      // Don't auto-uncollapse on auto-extraction, only on user interaction
-      // (ClassicSubtitles will uncollapse on click via overlay.uncollapse())
-      if (this.seeMoreBtn) {
-        this.seeMoreBtn.textContent = '\u2026 ' + this._seeMoreLabels.more; // "… see more"
-        this.seeMoreBtn.style.display = 'none';
-      }
+      // Disable max-height transition so layout settles instantly for truncation measurement
+      this.translationEl.style.transition = 'none';
+      if (this._truncMaxHeight) this.translationEl.style.maxHeight = this._truncMaxHeight;
+      this.container.classList.remove('ss-content-expanded', 'ss-expanding');
 
-      // Set text while preserving the see-more button child
-      // Remove all children except the see-more btn, then prepend text node
-      while (this.translationEl.firstChild !== this.seeMoreBtn && this.translationEl.firstChild) {
-        this.translationEl.removeChild(this.translationEl.firstChild);
+      // Clear all children, set text + see-more button
+      this.translationEl.textContent = '';
+      this._textNode = document.createTextNode(translation);
+      this.translationEl.appendChild(this._textNode);
+      if (this.seeMoreBtn) {
+        this.seeMoreBtn.textContent = '\u2026 ' + this._seeMoreLabels.more;
+        this.seeMoreBtn.style.display = 'none';
+        this.translationEl.appendChild(this.seeMoreBtn);
       }
-      this.translationEl.insertBefore(document.createTextNode(translation), this.seeMoreBtn);
 
       this.originalEl.textContent = original;
       this.originalEl.style.display = original ? 'block' : 'none';
       this.container.classList.add('ss-visible');
 
-      // Check for text overflow after render (show "see more" if > 3 lines)
-      // Double-rAF ensures layout is fully computed even on slow pages
-      this._checkOverflow();
+      // Force layout so max-height is applied before measuring overflow
+      void this.translationEl.offsetHeight;
 
-      // Auto-speak when TTS is unmuted
+      // Truncate text if it overflows, showing "… see more" inline
+      this._truncateIfNeeded();
+
+      // Re-enable transition for future expand/collapse animations
+      requestAnimationFrame(() => {
+        if (this.translationEl) this.translationEl.style.transition = '';
+      });
+
+      // Auto-speak when TTS is unmuted (always speak the full text)
       if (this.ttsEnabled && translation) {
         this._speak(translation);
       }
     }
 
-    hide() {
+    hide(force = false) {
+      // When collapsed, keep the overlay visible so the chevron stays on screen
+      // (unless force=true, e.g. extension disabled)
+      if (this._collapsed && !force) return;
+      if (this._collapsed) {
+        this._collapsed = false;
+        this._collapseAnimating = false;
+        this.container?.classList.remove('ss-collapsed', 'ss-collapsing', 'ss-uncollapsing');
+        if (this.collapseBtn) { this.collapseBtn.style.background = ''; this.collapseBtn.style.filter = ''; this.collapseBtn.style.transform = ''; }
+      }
       this.container?.classList.remove('ss-visible');
       // Clear stale text so it doesn't flash when the overlay fades back in
-      if (this.translationEl) {
-        while (this.translationEl.firstChild !== this.seeMoreBtn && this.translationEl.firstChild) {
-          this.translationEl.removeChild(this.translationEl.firstChild);
-        }
-      }
+      if (this.translationEl) this.translationEl.textContent = '';
+      this._textNode = null;
+      this._fullText = '';
       if (this.originalEl) this.originalEl.textContent = '';
     }
 
     // Get just the translation text (excludes "see more" button text)
     _getTranslationText() {
-      if (!this.translationEl) return '';
-      let text = '';
-      for (const node of this.translationEl.childNodes) {
-        if (node.nodeType === 3) text += node.textContent; // text nodes only
-      }
-      return text.trim();
+      return (this._fullText || '').trim();
     }
 
     // ---- Expand / collapse long text ----
     _toggleExpand() {
       this._expanded = !this._expanded;
-      this.translationEl.classList.toggle('ss-expanded', this._expanded);
-      // Also expand the overlay container so it doesn't clip
-      this.container?.classList.toggle('ss-content-expanded', this._expanded);
-      if (this.seeMoreBtn) {
-        this.seeMoreBtn.textContent = this._expanded
-          ? this._seeMoreLabels.less
-          : '\u2026 ' + this._seeMoreLabels.more; // "… see more" when collapsed
-      }
-    }
 
-    // Robust overflow detection: double-rAF + setTimeout fallback
-    _checkOverflow() {
-      const doCheck = () => {
-        if (!this.translationEl || !this.seeMoreBtn) return;
-        const el = this.translationEl;
-        const overflows = el.scrollHeight > el.clientHeight + 2;
-        this.seeMoreBtn.style.display = overflows ? 'inline' : 'none';
-        if (overflows) this._syncSeeMoreBg();
-      };
-      // Double rAF to ensure layout is fully computed
-      requestAnimationFrame(() => requestAnimationFrame(doCheck));
-      // Fallback: also check after a short delay (covers slow layout engines)
-      setTimeout(doCheck, 120);
-    }
+      if (this._expanded) {
+        // Restore full text first so we can measure the real height
+        this._textNode.textContent = this._fullText;
+        this.seeMoreBtn.textContent = this._seeMoreLabels.less;
 
-    // Adapt see-more gradient to page background (dark → dark fade, light → light fade)
-    _syncSeeMoreBg() {
-      if (!this.seeMoreBtn) return;
-      const bg = this._detectBg();
-      const m = bg.match(/rgba?\(\s*(\d+),\s*(\d+),\s*(\d+)/);
-      const lum = m ? (parseInt(m[1], 10) * 299 + parseInt(m[2], 10) * 587 + parseInt(m[3], 10) * 114) / 1000 : 0;
-      if (lum > 128) {
-        // Light page → fade to white
-        this.seeMoreBtn.style.background = 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.85) 30%)';
+        // Measure the full content height, then animate to it
+        this.translationEl.style.maxHeight = 'none';
+        const fullHeight = this.translationEl.scrollHeight;
+        this.translationEl.style.maxHeight = this._truncMaxHeight || '';
+
+        // Trigger reflow so the browser sees the starting value
+        void this.translationEl.offsetHeight;
+
+        // Flag the overlay to transition its own max-height smoothly
+        this.container?.classList.add('ss-expanding');
+        this.translationEl.classList.add('ss-expanded');
+        this.translationEl.style.maxHeight = fullHeight + 'px';
+        this.container?.classList.add('ss-content-expanded');
+
+        // After transition, switch to unclamped so it adapts to resizes
+        this._expandTimer = setTimeout(() => {
+          this._expandTimer = null;
+          this.translationEl.style.maxHeight = 'none';
+          this.container?.classList.remove('ss-expanding');
+        }, 380);
       } else {
-        // Dark page → fade to black
-        this.seeMoreBtn.style.background = 'linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.7) 30%)';
+        // Collapsing: animate back to truncated height
+        const currentHeight = this.translationEl.scrollHeight;
+        this.translationEl.style.maxHeight = currentHeight + 'px';
+        void this.translationEl.offsetHeight;
+
+        this.translationEl.classList.remove('ss-expanded');
+        this.translationEl.style.maxHeight = this._truncMaxHeight || '';
+        this.container?.classList.remove('ss-content-expanded');
+
+        // After transition, re-truncate the text
+        setTimeout(() => {
+          this._truncateText();
+        }, 380);
       }
+    }
+
+    // Truncate text if it overflows, showing "… see more" inline
+    _truncateIfNeeded() {
+      const checkAndTruncate = () => {
+        if (!this.translationEl || !this.seeMoreBtn || !this._textNode || !this._fullText) return;
+        const el = this.translationEl;
+        // Always test with the FULL text — the current textNode may already be truncated
+        this._textNode.textContent = this._fullText;
+        this.seeMoreBtn.style.display = 'none';
+        if (el.scrollHeight <= el.clientHeight + 2) {
+          return; // full text fits — no truncation needed
+        }
+        this._truncateText();
+      };
+      // Run synchronously first (transition is disabled in show())
+      checkAndTruncate();
+      // Fallback: also check async in case layout wasn't ready
+      requestAnimationFrame(() => requestAnimationFrame(checkAndTruncate));
+    }
+
+    // Binary-search truncate text so that text + "… see more" fits within max-height
+    _truncateText() {
+      if (!this._textNode || !this.seeMoreBtn || !this._fullText) return;
+      const el = this.translationEl;
+      const full = this._fullText;
+
+      // Show the button inline so it takes up space during measurement
+      this.seeMoreBtn.textContent = '\u2026 ' + this._seeMoreLabels.more;
+      this.seeMoreBtn.style.display = 'inline';
+
+      // Binary search for the longest text that fits
+      let lo = 0, hi = full.length;
+      while (lo < hi) {
+        const mid = (lo + hi + 1) >>> 1;
+        this._textNode.textContent = full.slice(0, mid);
+        if (el.scrollHeight <= el.clientHeight + 2) {
+          lo = mid;
+        } else {
+          hi = mid - 1;
+        }
+      }
+
+      // Trim to last word boundary for cleaner cut
+      let cut = lo;
+      if (cut < full.length) {
+        const lastSpace = full.lastIndexOf(' ', cut);
+        if (lastSpace > cut * 0.5) cut = lastSpace;
+      }
+
+      this._textNode.textContent = full.slice(0, cut);
     }
 
     // Force-uncollapse (used when user clicks text — they want to see the subtitle)
     uncollapse() {
       if (this._collapsed) {
+        const btn = this.collapseBtn;
+        const startRect = btn ? btn.getBoundingClientRect() : null;
+
+        // Disable overlay transition so layout snaps to final size for accurate measurement
+        this.container.style.transition = 'none';
         this._collapsed = false;
-        this.container.classList.remove('ss-collapsed');
-        // Reset the inline background that _syncCollapseBg set on the pill
-        if (this.collapseBtn) this.collapseBtn.style.background = '';
+        this._collapseAnimating = false;
+        this.container.classList.remove('ss-collapsed', 'ss-collapsing');
+        this.container.classList.add('ss-uncollapsing');
+        // Restore button styling based on whether overlay background is on
+        if (btn) { btn.style.background = ''; btn.style.filter = ''; }
+        if (!this.showBackground) this._syncBtnFill();
+
+        if (btn && startRect) {
+          void this.container.offsetHeight; // force layout at final size
+          const endRect = btn.getBoundingClientRect();
+          const dx = startRect.left - endRect.left;
+          const dy = startRect.top - endRect.top;
+          btn.style.transition = 'none';
+          btn.style.transform = `translate(${dx}px, ${dy}px)`;
+          void btn.offsetHeight;
+          this.container.style.transition = ''; // re-enable overlay transitions
+          btn.style.transition = 'transform 0.35s cubic-bezier(0.4, 0, 0.2, 1)';
+          btn.style.transform = 'translate(0, 0)';
+          setTimeout(() => {
+            btn.style.transition = '';
+            btn.style.transform = '';
+            this.container.classList.remove('ss-uncollapsing');
+          }, 380);
+        } else {
+          this.container.style.transition = ''; // re-enable
+          requestAnimationFrame(() => {
+            setTimeout(() => this.container.classList.remove('ss-uncollapsing'), 300);
+          });
+        }
       }
     }
 
     // ---- Collapse / expand overlay (hide subtitles when in the way) ----
     _toggleCollapse() {
-      this._collapsed = !this._collapsed;
-      this.container.classList.toggle('ss-collapsed', this._collapsed);
-      if (this._collapsed) {
-        // Adaptive background for the collapsed pill button
-        this._syncCollapseBg();
+      if (this._collapseAnimating) return; // prevent double-clicks during animation
+      this._collapseAnimating = true;
+      const btn = this.collapseBtn;
+
+      if (!this._collapsed) {
+        // ---- Collapsing: fade out content, then glide button to corner ----
+        this._collapsed = true;
         this._stopSpeech();
+        this.container.classList.add('ss-collapsing');
+
+        // Capture button's current position before layout changes
+        const startRect = btn ? btn.getBoundingClientRect() : null;
+
+        // After content fades out, apply collapsed state and animate button
+        setTimeout(() => {
+          this.container.classList.remove('ss-collapsing');
+          this.container.classList.add('ss-collapsed');
+          this._syncCollapseBg();
+
+          if (btn && startRect) {
+            // Button is now position:fixed at its target — get its new position
+            const endRect = btn.getBoundingClientRect();
+            const dx = startRect.left - endRect.left;
+            const dy = startRect.top - endRect.top;
+
+            // Place button at its old position via transform (no transition yet)
+            btn.style.transition = 'none';
+            btn.style.transform = `translate(${dx}px, ${dy}px)`;
+            void btn.offsetHeight; // force reflow
+
+            // Animate to the target position
+            btn.style.transition = 'transform 0.35s cubic-bezier(0.4, 0, 0.2, 1)';
+            btn.style.transform = 'translate(0, 0)';
+
+            setTimeout(() => {
+              btn.style.transition = '';
+              btn.style.transform = '';
+              this._collapseAnimating = false;
+            }, 380);
+          } else {
+            this._collapseAnimating = false;
+          }
+        }, 250);
       } else {
-        // Reset inline bg when expanding
-        if (this.collapseBtn) this.collapseBtn.style.background = '';
+        // ---- Uncollapsing: glide button back, then fade in content ----
+
+        // Capture button's current fixed position
+        const startRect = btn ? btn.getBoundingClientRect() : null;
+
+        // Disable overlay transition so layout snaps to final state for measurement
+        this.container.style.transition = 'none';
+        this._collapsed = false;
+        this.container.classList.remove('ss-collapsed');
+        this.container.classList.add('ss-uncollapsing');
+        // Restore button styling based on whether overlay background is on
+        if (btn) { btn.style.background = ''; btn.style.filter = ''; }
+        if (!this.showBackground) this._syncBtnFill();
+
+        if (btn && startRect) {
+          // Force layout at final size so we get the correct inline position
+          void this.container.offsetHeight;
+          const endRect = btn.getBoundingClientRect();
+          const dx = startRect.left - endRect.left;
+          const dy = startRect.top - endRect.top;
+
+          // Place button at its old (fixed corner) position
+          btn.style.transition = 'none';
+          btn.style.transform = `translate(${dx}px, ${dy}px)`;
+          void btn.offsetHeight;
+
+          // Re-enable overlay transition, then animate button to inline position
+          this.container.style.transition = '';
+          btn.style.transition = 'transform 0.35s cubic-bezier(0.4, 0, 0.2, 1)';
+          btn.style.transform = 'translate(0, 0)';
+
+          setTimeout(() => {
+            btn.style.transition = '';
+            btn.style.transform = '';
+            this.container.classList.remove('ss-uncollapsing');
+            this._collapseAnimating = false;
+          }, 380);
+        } else {
+          this.container.style.transition = '';
+          requestAnimationFrame(() => {
+            setTimeout(() => {
+              this.container.classList.remove('ss-uncollapsing');
+              this._collapseAnimating = false;
+            }, 300);
+          });
+        }
       }
+
       // Notify ClassicSubtitles so it can pause/resume extraction
       if (typeof this._onCollapseChange === 'function') {
         this._onCollapseChange(this._collapsed);
       }
     }
 
-    // Set collapse button background based on page luminance
+    // Set collapse button background based on page luminance (collapsed state only)
     _syncCollapseBg() {
       if (!this.collapseBtn) return;
       const bg = this._detectBg();
       const m = bg.match(/rgba?\(\s*(\d+),\s*(\d+),\s*(\d+)/);
       const lum = m ? (parseInt(m[1], 10) * 299 + parseInt(m[2], 10) * 587 + parseInt(m[3], 10) * 114) / 1000 : 0;
-      this.collapseBtn.style.background = lum > 128
+      this.collapseBtn.style.setProperty('background', lum > 128
         ? 'rgba(255, 255, 255, 0.65)'  // light site — semi-transparent white
-        : 'rgba(0, 0, 0, 0.6)';        // dark site — semi-transparent black
+        : 'rgba(0, 0, 0, 0.6)',        // dark site — semi-transparent black
+        'important');
     }
 
     // ---- Close button (click-lock dismiss) — anchored to highlighted element ----
@@ -547,7 +899,7 @@
           ? 'rgba(0, 0, 0, 0.55)'         // light site → semi-transparent black bg
           : 'rgba(0, 0, 0, 0.75)';        // dark site → black bg
       }
-      this.closeBtn.style.display = 'block';
+      this.closeBtn.style.display = 'flex';
     }
 
     hideCloseBtn() {
@@ -556,7 +908,18 @@
 
     updateSettings(s) {
       if (!this.container) return;
-      if (s.fontSize) this.translationEl.style.fontSize = s.fontSize + 'px';
+      if (s.fontSize) {
+        const fs = s.fontSize;
+        this.translationEl.style.fontSize = fs + 'px';
+        // Scale line-height so large text doesn't overlap vertically
+        // Base ratio 1.21 (29/24) at default 24px, increasing to ~1.35 for 48px+
+        const ratio = fs <= 24 ? 1.21 : 1.21 + (fs - 24) * 0.006;
+        const lh = Math.round(fs * ratio);
+        this.translationEl.style.lineHeight = lh + 'px';
+        // Update max-height for 3-line truncation
+        this._truncMaxHeight = (3 * lh) + 'px';
+        if (!this._expanded) this.translationEl.style.maxHeight = this._truncMaxHeight;
+      }
       if (s.showBackground !== undefined) {
         this.showBackground = s.showBackground;
         this._syncBg();
@@ -659,7 +1022,7 @@
         // Comments
         for (const el of document.querySelectorAll('ytd-comment-renderer #content-text')) {
           if (el.closest('#ss-overlay')) continue;
-          const text = this._getVisibleText(el);
+          const text = _getVisibleText(el);
           if (!text || text.length < 10 || text.length > 500) continue;
           if (!/[a-zA-Z]{2,}/.test(text)) continue;
           const rect = el.getBoundingClientRect();
@@ -679,7 +1042,7 @@
         // Video description (if visible)
         const descEl = document.querySelector('ytd-text-inline-expander #snippet-text, ytd-text-inline-expander .content');
         if (descEl) {
-          const text = this._getVisibleText(descEl);
+          const text = _getVisibleText(descEl);
           if (text && text.length >= 20 && /[a-zA-Z]{2,}/.test(text)) {
             const rect = descEl.getBoundingClientRect();
             const score = this._vScore(rect);
@@ -890,24 +1253,35 @@
       for (const span of spans) {
         // Skip if inside a comment list (comments live in <ul> elements)
         if (span.closest('ul')) continue;
-        // Skip very short text (usernames, timestamps, button labels)
-        const text = this._getVisibleText(span);
+        // Skip if inside a link (username links)
+        if (span.closest('a')) continue;
+        const text = _getVisibleText(span);
         if (!text || text.length < 15) continue;
         if (!/[a-zA-Z]{2,}/.test(text)) continue;
-        if (this._isExcluded(span)) continue;
-        if (this._isNonContentText(text)) continue;
-        if (this._looksLikeCode(text)) continue;
-        return { text: text.substring(0, 500), element: span };
+        // Skip single-word text (likely usernames) — real captions have spaces
+        if (!text.includes(' ') && text.length < 30) continue;
+        if (_isNonContentText(text)) continue;
+        if (_looksLikeCode(text)) continue;
+        // Clean Instagram caption: strip leading reaction counts and username
+        const cleaned = _cleanInstagramCaption(text);
+        if (cleaned && cleaned.length >= 15) {
+          return { text: cleaned.substring(0, 500), element: span };
+        }
       }
 
       // Fallback: any caption-like text in the article (including inside <ul>)
       for (const span of spans) {
-        const text = this._getVisibleText(span);
+        if (span.closest('a')) continue;
+        const text = _getVisibleText(span);
         if (!text || text.length < 15) continue;
         if (!/[a-zA-Z]{2,}/.test(text)) continue;
-        if (this._isNonContentText(text)) continue;
-        if (this._looksLikeCode(text)) continue;
-        return { text: text.substring(0, 500), element: span };
+        if (!text.includes(' ') && text.length < 30) continue;
+        if (_isNonContentText(text)) continue;
+        if (_looksLikeCode(text)) continue;
+        const cleaned = _cleanInstagramCaption(text);
+        if (cleaned && cleaned.length >= 15) {
+          return { text: cleaned.substring(0, 500), element: span };
+        }
       }
 
       return null;
@@ -939,12 +1313,13 @@
             const parentArticle = el.closest('[role="article"]');
             if (parentArticle && parentArticle !== bestPost) continue;
             // Use _getVisibleText to filter out aria-hidden anti-scrape text
-            const text = this._getVisibleText(el);
+            const text = _getVisibleText(el);
             if (!text || text.length < 8 || text.length > 800) continue;
             if (!/[a-zA-Z]{2,}/.test(text)) continue;
             if (this._isExcluded(el)) continue;
-            if (this._isNonContentText(text)) continue;
-            if (this._looksLikeCode(text)) continue;
+            if (_isNonContentText(text)) continue;
+            if (_hasConcatenatedActions(text)) continue;
+            if (_looksLikeCode(text)) continue;
             return { text: text.substring(0, 300), element: el };
           }
         }
@@ -956,30 +1331,25 @@
     _tiktok() { return this._bestVisible(['[data-e2e="browse-video-desc"]']); }
     _hn() { return this._bestVisible(['.titleline > a', '.title > a']); }
     _linkedin() {
-      // LinkedIn feed: post text in update descriptions or break-words spans
-      const posts = document.querySelectorAll('.feed-shared-update-v2, [data-urn]');
-      if (posts.length > 0) {
-        let bestPost = null, bestScore = -Infinity;
-        for (const post of posts) {
-          const rect = post.getBoundingClientRect();
-          const score = this._vScore(rect);
-          if (score > bestScore) { bestScore = score; bestPost = post; }
-        }
-        if (bestPost) {
-          const desc = bestPost.querySelector('.feed-shared-update-v2__description') ||
-                       bestPost.querySelector('.break-words span[dir="ltr"]') ||
-                       bestPost.querySelector('.feed-shared-text span[dir="ltr"]') ||
-                       bestPost.querySelector('span[dir="ltr"]');
-          if (desc) {
-            const text = this._getVisibleText(desc);
-            if (text && text.length >= 8 && /[a-zA-Z]{2,}/.test(text) &&
-                !this._isNonContentText(text) && !this._looksLikeCode(text)) {
-              return { text: text.substring(0, 300), element: desc };
-            }
-          }
-        }
+      // LinkedIn feed: post text lives in span[dir="ltr"] elements.
+      // Avoid relying on specific class names — LinkedIn changes them frequently.
+      // Strategy: find all span[dir="ltr"] in the main feed, score by viewport center.
+      const spans = document.querySelectorAll('span[dir="ltr"]');
+      let best = null, bestScore = -Infinity;
+      for (const span of spans) {
+        // Skip nav, header, sidebar
+        if (span.closest('nav, header, aside, [role="navigation"], [role="banner"]')) continue;
+        const text = _getVisibleText(span);
+        if (!text || text.length < 30 || !text.includes(' ')) continue;
+        if (!/[a-zA-Z]{2,}/.test(text)) continue;
+        if (_isNonContentText(text) || _looksLikeCode(text)) continue;
+        const rect = span.getBoundingClientRect();
+        const score = this._vScore(rect);
+        if (score > bestScore) { bestScore = score; best = { text: text.substring(0, 500), element: span }; }
       }
-      return this._bestVisible(['.feed-shared-update-v2__description', '.break-words span[dir="ltr"]']);
+      if (best) return best;
+      // Fallback: try data-urn containers or generic visible text
+      return this._bestVisible(['[data-urn] span[dir="ltr"]', 'span[dir="ltr"]']);
     }
 
     _generic() {
@@ -997,13 +1367,13 @@
             // Otherwise use _getVisibleText which filters out hidden/aria-hidden nodes
             const text = (preferAttr && el.getAttribute(preferAttr))
               ? el.getAttribute(preferAttr).trim()
-              : this._getVisibleText(el);
+              : _getVisibleText(el);
             if (!text || text.length < 8 || text.length > 800) continue;
             if (!/[a-zA-Z]{2,}/.test(text)) continue;
             if (this._isExcluded(el)) continue;
-            if (this._isNonContentText(text)) continue;
-            if (this._looksLikeCode(text)) continue;
-            if (this._hasConcatenatedActions(text)) continue;
+            if (_isNonContentText(text)) continue;
+            if (_looksLikeCode(text)) continue;
+            if (_hasConcatenatedActions(text)) continue;
             const rect = el.getBoundingClientRect();
             const score = this._vScore(rect);
             if (score > bestScore) {
@@ -1043,7 +1413,10 @@
           cls.includes('dropdown') || cls.includes('popup') ||
           cls.includes('modal') || cls.includes('toast') ||
           cls.includes('notification') || cls.includes('banner') ||
-          cls.includes('cookie') || cls.includes('consent')
+          cls.includes('cookie') || cls.includes('consent') ||
+          cls.includes('gdpr') || cls.includes('ccpa') ||
+          id.includes('cookie') || id.includes('consent') ||
+          id.includes('gdpr') || id.includes('ccpa')
         ) return true;
 
         // Ads & promotions
@@ -1078,14 +1451,20 @@
           testId.includes('flair') || testId.includes('author')
         ) return true;
 
-        // Generic role checks — skip buttons, menus, navigation, alerts
-        // Note: 'dialog' excluded from this check because Instagram/etc. use dialogs for content
+        // Generic role checks — skip buttons, menus, navigation, alerts, dialogs
         const role = node.getAttribute?.('role') || '';
-        if (role === 'alert' || role === 'alertdialog' || role === 'banner' ||
+        if (role === 'dialog' || role === 'alert' || role === 'alertdialog' || role === 'banner' ||
             role === 'status' || role === 'log' || role === 'marquee' || role === 'timer' ||
-            role === 'button' || role === 'menu' || role === 'menuitem' ||
+            role === 'menu' || role === 'menuitem' ||
             role === 'menubar' || role === 'toolbar' || role === 'tablist' ||
             role === 'navigation' || role === 'complementary') return true;
+        // role="button": only exclude if it's a real small button, not a large content
+        // container (Instagram wraps comment <li>s in div[role="button"])
+        if (role === 'button') {
+          const btnText = (node.textContent?.trim() || '');
+          if (btnText.length < 80) return true; // Small — real button
+          // Large content container — don't exclude
+        }
 
         // Skip <button>, <script>, <style>, <noscript>, <template>, <svg> elements
         if (tag === 'button' || tag === 'script' || tag === 'style' ||
@@ -1101,16 +1480,19 @@
         ) return true;
 
         // Instagram/social action bars: section/div containing like/comment/share buttons
-        // Detect by counting action words — if 2+ present in short text, it's an action bar
+        // Detect by counting action words — only for SHORT containers (actual action bars).
+        // Longer containers (e.g. Instagram post wrappers) include captions alongside buttons,
+        // so we require more matches or shorter text to avoid false positives.
         if (tagName === 'section' || (tagName === 'div' && node.childElementCount > 1)) {
           const actionText = (node.textContent?.trim() || '').toLowerCase();
-          if (actionText.length < 200) {
-            const actions = ['like', 'comment', 'share', 'save', 'send', 'more',
-              'me gusta', 'comentar', 'compartir', 'guardar', 'enviar', 'más',
-              'reply', 'responder', 'repost', 'views', 'view all', 'ver todo'];
-            const matchCount = actions.filter(a => actionText.includes(a)).length;
-            if (matchCount >= 2) return true;
-          }
+          const actions = ['like', 'comment', 'share', 'save', 'send', 'more',
+            'me gusta', 'comentar', 'compartir', 'guardar', 'enviar', 'más',
+            'reply', 'responder', 'repost', 'views', 'view all', 'ver todo'];
+          const matchCount = actions.filter(a => actionText.includes(a)).length;
+          // Short text (< 80): 2+ matches = action bar
+          // Medium text (80-200): needs 4+ matches to be considered action bar
+          if (actionText.length < 80 && matchCount >= 2) return true;
+          if (actionText.length < 200 && matchCount >= 4) return true;
         }
 
         node = node.parentElement;
@@ -2186,7 +2568,7 @@
       this._igScrollHandler = null;
       this._ytNavHandler = null;
       this._ytUrlCheck = null;
-      this._ytNavDebounce = false;
+      this._ytNavTimeout = null;
       this._lastYTUrl = '';
       this._translateGen = 0; // Generation counter to prevent stale translations overwriting newer ones
     }
@@ -2206,11 +2588,22 @@
     // Create overlay/translator/extractor and start subtitle extraction.
     // Called once on first enable (initial load or toggled on from popup).
     _boot() {
+      // Never run on login, auth, payment, or checkout pages
+      if (_isRestrictedPage()) return;
+
       if (!this.overlay) {
         this.overlay = new SubtitleOverlay();
         this.overlay._onClose = () => this._onCloseOverlay();
         this.overlay._onCollapseChange = (collapsed) => {
-          if (!collapsed) {
+          if (collapsed) {
+            // Clear any active text selection, highlight, and close button
+            this._clickLocked = false;
+            this._hoverLocked = false;
+            clearTimeout(this._hoverTimer);
+            this._clearHighlight();
+            this.overlay.hideCloseBtn();
+            this.lastText = '';
+          } else {
             // Re-trigger subtitle extraction immediately on expand
             this.lastText = '';
             this._showBest();
@@ -2225,7 +2618,28 @@
         this._initYouTube();
       } else {
         this._initPage();
+        // On YouTube non-watch pages (homepage, search), listen for SPA navigation
+        // to a watch page so we can switch to YouTube mode without a refresh
+        if (window.location.hostname.includes('youtube.com')) {
+          this._initYTNavWatcher();
+        }
       }
+    }
+
+    // Listen for YouTube SPA navigation when starting on a non-watch page
+    _initYTNavWatcher() {
+      if (this._ytNavHandler) return; // already listening
+      this._lastYTUrl = location.href;
+
+      this._ytNavHandler = () => this._onYTNavigate();
+      document.addEventListener('yt-navigate-finish', this._ytNavHandler);
+
+      // Fallback: URL polling
+      this._ytUrlCheck = setInterval(() => {
+        if (location.href !== this._lastYTUrl) {
+          this._onYTNavigate();
+        }
+      }, 2000);
     }
 
     _isYTWatch() {
@@ -2269,12 +2683,15 @@
     }
 
     _onYTNavigate() {
-      // Debounce — prevent double-firing from both detection mechanisms
-      if (this._ytNavDebounce) return;
-      this._ytNavDebounce = true;
-      setTimeout(() => { this._ytNavDebounce = false; }, 2500);
-
+      // Deduplicate by URL — skip if the URL hasn't actually changed
+      // (handles initial page load firing yt-navigate-finish, and double-detection
+      // from both yt-navigate-finish + URL polling for the same navigation)
+      if (location.href === this._lastYTUrl) return;
       this._lastYTUrl = location.href;
+
+      // Cancel any pending navigation timeout from a previous rapid navigation
+      if (this._ytNavTimeout) { clearTimeout(this._ytNavTimeout); this._ytNavTimeout = null; }
+
       this.ytHandler?.destroy();
       this._stopPage();
       this.overlay?._stopSpeech();
@@ -2285,7 +2702,8 @@
       this._clearHighlight();
       this.lastText = '';
 
-      setTimeout(() => {
+      this._ytNavTimeout = setTimeout(() => {
+        this._ytNavTimeout = null;
         this.overlay?._syncBg();
         if (this._isYTWatch()) {
           this.ytHandler = new YouTubeHandler(this.overlay, this.translator, this.settings);
@@ -2295,7 +2713,7 @@
           if (this.overlay?.container) document.body.appendChild(this.overlay.container);
           this._initPage();
         }
-      }, 1500);
+      }, 500);
     }
 
     _onYTPageScroll() {
@@ -2340,7 +2758,7 @@
         this._ytPageScrollHandler = null;
       }
       clearTimeout(this._ytScrollTimer);
-      this._ytNavDebounce = false;
+      if (this._ytNavTimeout) { clearTimeout(this._ytNavTimeout); this._ytNavTimeout = null; }
     }
 
     // ---- General pages ----
@@ -2428,167 +2846,6 @@
       this.lastText = '';
     }
 
-    // ---- Smart text extraction helpers ----
-
-    // Get visible text from element, excluding hidden/invisible/non-content nodes
-    _getVisibleText(el) {
-      // Walk the DOM to collect text, skipping non-visible/non-content nodes.
-      // Avoids expensive getComputedStyle on every node — uses fast checks first,
-      // only falling back to computed style for elements that look suspicious.
-      let text = '';
-      const walk = (node) => {
-        if (node.nodeType === 3) { text += node.textContent; return; }
-        if (node.nodeType !== 1) return; // only process element nodes
-        const tag = node.tagName?.toLowerCase();
-        // Skip script/style/template/svg (SVG can contain obfuscated text nodes)
-        if (tag === 'script' || tag === 'style' || tag === 'noscript' ||
-            tag === 'template' || tag === 'svg') return;
-        // Skip aria-hidden elements (screen reader text, obfuscated anti-scrape decorations)
-        if (node.getAttribute('aria-hidden') === 'true') return;
-
-        if (node !== el) {
-          // Fast check: inline style patterns for hiding (Facebook anti-scrape, etc.)
-          const inlineStyle = node.getAttribute('style') || '';
-          if (/display\s*:\s*none|visibility\s*:\s*hidden|font-size\s*:\s*0/i.test(inlineStyle)) return;
-          // Overflow hidden + 0-height inline style (obfuscated containers)
-          if (/overflow\s*:\s*hidden/i.test(inlineStyle) && /height\s*:\s*0/i.test(inlineStyle)) return;
-
-          // Fast check: zero-size elements with no offset (hidden via display:none etc.)
-          if (tag !== 'span' && tag !== 'br' && tag !== 'wbr' && tag !== 'a') {
-            if (node.offsetParent === null && node.offsetHeight === 0 && node.offsetWidth === 0) {
-              const s = node.style;
-              if (s && (s.display === 'none' || s.visibility === 'hidden')) return;
-              // getComputedStyle only for zero-size block elements (likely truly hidden)
-              try {
-                const cs = getComputedStyle(node);
-                if (cs.display === 'none' || cs.visibility === 'hidden') return;
-              } catch {}
-            }
-          }
-
-          // Screen-reader-only detection: only check elements that have sr-only class hints
-          // or are positioned absolute/fixed with suspicious inline styles
-          const cls = typeof node.className === 'string' ? node.className : '';
-          if (cls && /\b(sr-only|visually-hidden|screen-reader|clip-hide|a11y-hidden|assistive-text)\b/i.test(cls)) {
-            return; // Known sr-only class names — skip
-          }
-          // Check for sr-only inline patterns: position:absolute + clip or tiny dimensions
-          if (/position\s*:\s*(absolute|fixed)/i.test(inlineStyle)) {
-            if (/clip\s*:/i.test(inlineStyle) || /clip-path\s*:/i.test(inlineStyle)) return;
-            if (/width\s*:\s*1px/i.test(inlineStyle) && /height\s*:\s*1px/i.test(inlineStyle)) return;
-            if (/left\s*:\s*-\d{4,}/i.test(inlineStyle) || /top\s*:\s*-\d{4,}/i.test(inlineStyle)) return;
-          }
-        }
-
-        for (const child of node.childNodes) walk(child);
-      };
-      walk(el);
-      return text.trim();
-    }
-
-    // Detect text that looks like code, obfuscated strings, or garbled non-language
-    _looksLikeCode(text) {
-      if (!text || text.length < 10) return false;
-
-      // 1. JavaScript/CSS code patterns
-      if (text.length >= 20) {
-        const codeSignals = (text.match(/===|!==|=>|\|\||;\s*\w|\.querySelector|\.addEventListener|\.className|null;|undefined;|function\s*\(|const\s+\w+=|let\s+\w+=|var\s+\w+=|\}\s*\)|\btypeof\b|\bwindow\./g) || []).length;
-        if (codeSignals >= 2) return true;
-      }
-
-      // 2. Obfuscated/garbled strings (Facebook anti-scrape, CSS class names)
-      // Tokens with mixed letters+digits in non-word patterns like "am7a892f6atc49"
-      const tokens = text.split(/\s+/);
-      let garbledTokens = 0;
-      for (const tok of tokens) {
-        if (tok.length < 5) continue;
-        const hasLetters = /[a-zA-Z]/.test(tok);
-        const hasDigits = /\d/.test(tok);
-        if (hasLetters && hasDigits) {
-          const digitRatio = (tok.match(/\d/g) || []).length / tok.length;
-          // Significant digit mixing in a "word" = garbled (not dates, not "24px")
-          if (digitRatio > 0.15 && digitRatio < 0.85 && tok.length > 6) garbledTokens++;
-        }
-        // Very long tokens with no vowels or very few = likely hashed/obfuscated
-        if (tok.length > 10 && hasLetters) {
-          const vowelRatio = (tok.match(/[aeiouAEIOU]/g) || []).length / tok.length;
-          if (vowelRatio < 0.1) garbledTokens++;
-        }
-      }
-      if (garbledTokens >= 2) return true;
-      // Single garbled token that IS the whole text
-      if (garbledTokens >= 1 && tokens.length <= 2) return true;
-
-      // 3. Long string with no spaces at all (likely a CSS class, hash, or encoded string)
-      if (text.length > 20 && !text.includes(' ') && !/^https?:\/\//.test(text)) return true;
-
-      return false;
-    }
-
-    // Detect concatenated UI text (action buttons + content mashed together)
-    _hasConcatenatedActions(text) {
-      if (!text) return false;
-      const t = text.trim();
-
-      // 1. Social actions concatenated: LikeCommentShareSave etc.
-      if (/(?:Like|Comment|Share|Save|Send|Reply|Repost|Follow)\d*(?:Like|Comment|Share|Save|Send|Reply|Repost|Follow|[A-Z])/i.test(t)) return true;
-
-      // 2. YouTube: Tap to unmute2xSearchInfoShopping etc.
-      if (/(?:Search|Info|Shopping|Subscribe|Upcoming|Cancel|Play now)\w*(?:Search|Info|Shopping|Subscribe|Upcoming|Cancel|Play now|[A-Z])/i.test(t)) return true;
-
-      // 3. Navigation/UI words concatenated without spaces: PreviousNext, ToolsPro, etc.
-      // Two or more UI words stuck together as a single "word" (no spaces)
-      const uiWordPattern = /^(?:Previous|Next|Back|Forward|Close|Open|Cancel|Submit|Loading|Search|Filter|Sort|Menu|Tools|Settings|Options|More|Less|View|Edit|Delete|Remove|Add|New|Save|Undo|Redo|Refresh|Home|Up|Down|Left|Right|First|Last|Show|Hide|Toggle|Select|Clear|Reset|Apply|Done|Skip|Play|Pause|Stop|Mute|Unmute|Pro|Plus|Premium|Free|Upgrade|Sign|Log|Login|Logout|Profile|Account|Help|Info|About|Contact|Privacy|Terms|Accept|Decline|Dismiss|Learn|Read|Watch|Listen|Download|Upload|Import|Export|Copy|Paste|Print|Zoom|Expand|Collapse|Minimize|Maximize|Fullscreen|Exit|Shared|Public|Friends|Everyone){2,}$/i;
-      // Check each whitespace-separated token
-      for (const word of t.split(/\s+/)) {
-        if (word.length > 5 && uiWordPattern.test(word)) return true;
-      }
-
-      // 4. Generic: 2+ CamelCase words jammed together (PreviousNext, ToolsPro)
-      const camelRuns = t.match(/[A-Z][a-z]{2,}(?=[A-Z])/g);
-      if (camelRuns && camelRuns.length >= 2) {
-        // If the text is ONLY the concatenated words (no surrounding sentence), reject it
-        const joined = t.replace(/\s+/g, '');
-        if (joined.length < 30) return true;
-      }
-      // Still reject 3+ CamelCase even in longer text
-      if (camelRuns && camelRuns.length >= 3) return true;
-
-      return false;
-    }
-
-    // Detect text that is metadata, UI labels, or non-content (not worth translating)
-    _isNonContentText(text) {
-      if (!text) return true;
-      const t = text.trim();
-      if (t.length < 3) return true;
-
-      // Exact-match known metadata/UI labels (case insensitive)
-      const metadataPattern = /^(shared with (public|friends|everyone|friends of friends)|public(ly)?|friends only|only me|see more|see less|view all|load more|show more|show less|edited|pinned|sponsored|promoted|suggested for you|suggested|recommended|verified|following|follow|unfollow|liked?|comment|share|send|saved?|reply|retweet|repost|quote|bookmark|report|block|mute|hide|not interested|turn on notifications|see translation|translate tweet|translated by|original|view translation|view original|most relevant|newest first|all comments|people also viewed|you might like|add a comment|write a comment|log in|sign up|sign in|create account|learn more|read more|view more|shop now|see all|sell|buy|post|x|×|\.\.\.)$/i;
-      if (metadataPattern.test(t)) return true;
-
-      // Starts with "Shared with" (Facebook privacy label variants)
-      if (/^shared with\b/i.test(t) && t.length < 40) return true;
-
-      // Engagement metrics patterns: "1.7K", "123 shares", "44 comments"
-      if (/^\d[\d.,KkMmBb]*\s*(comments?|shares?|likes?|views?|reactions?|replies?|retweets?|reposts?|followers?|following)?\s*$/i.test(t)) return true;
-
-      // Timestamp-like short text: "1h", "2d", "3w", "5m ago", "Just now", "Yesterday"
-      if (/^(\d+[smhdw]|just now|yesterday|today|\d+ (?:seconds?|minutes?|hours?|days?|weeks?|months?|years?) ago)$/i.test(t)) return true;
-
-      return false;
-    }
-
-    // Clean extracted text: strip bare URLs, excess whitespace
-    _cleanExtractedText(text) {
-      if (!text) return text;
-      return text
-        .replace(/https?:\/\/\S+/g, '')
-        .replace(/www\.\S+/g, '')
-        .replace(/\s{2,}/g, ' ')
-        .trim();
-    }
-
     // Find the most specific child element near cursor with reasonable text
     _findBestChildNearPoint(el, x, y) {
       const selectors = 'p, li, h1, h2, h3, h4, h5, h6, blockquote, td, a, span, yt-formatted-string, [dir="auto"]';
@@ -2599,15 +2856,17 @@
       for (const child of children) {
         // Prefer the title attribute if present (e.g. YouTube #video-title)
         const titleAttr = child.getAttribute('title');
-        const cText = (titleAttr && titleAttr.length >= 5) ? titleAttr.trim() : this._getVisibleText(child);
+        const cText = (titleAttr && titleAttr.length >= 5) ? titleAttr.trim() : _getVisibleText(child);
         if (!cText || cText.length < 5 || cText.length > 5000) continue;
         if (!/[a-zA-Z]{2,}/.test(cText)) continue;
-        if (this._looksLikeCode(cText)) continue;
+        if (_looksLikeCode(cText)) continue;
         if (this.extractor._isExcluded(child)) continue;
         if (this.extractor._isMostlyUsernames(cText)) continue;
 
         const rect = child.getBoundingClientRect();
         if (rect.height === 0 || rect.width === 0) continue;
+        // Skip child elements that are off-screen (from other posts in a feed)
+        if (rect.bottom < 0 || rect.top > window.innerHeight) continue;
 
         // Distance weighted toward vertical proximity
         const cy = (rect.top + rect.bottom) / 2;
@@ -2630,7 +2889,7 @@
 
     // Extract sentences near cursor from long text block (up to 1500 chars)
     _extractNearbySentences(el, x, y) {
-      const fullText = this._cleanExtractedText(this._getVisibleText(el));
+      const fullText = _cleanExtractedText(_getVisibleText(el));
       if (!fullText || fullText.length < 10) return null;
       if (fullText.length <= 1500) return fullText;
 
@@ -2698,7 +2957,23 @@
       // Scrolling releases hover lock only — click-lock persists through scroll
       this._hoverLocked = false;
 
-      // If click-locked, don't auto-extract — keep locked text visible
+      // Universal offscreen detection: if the source element for the current
+      // subtitle has scrolled out of the viewport, clear it immediately.
+      // Works for ALL states (click-locked, hover-locked, auto) on ALL sites.
+      if (this._lastSourceEl && this.lastText) {
+        const r = this._lastSourceEl.getBoundingClientRect();
+        if (r.bottom < -50 || r.top > window.innerHeight + 50) {
+          this._clickLocked = false;
+          this._hoverLocked = false;
+          this.overlay?.hide();
+          this.overlay?.hideCloseBtn();
+          this._clearHighlight();
+          this.lastText = '';
+          // Don't return — fall through to _showBest to find new text
+        }
+      }
+
+      // If click-locked (and source still visible), don't auto-extract
       if (this._clickLocked) return;
 
       // Leading edge: fire immediately on first scroll tick
@@ -2716,6 +2991,71 @@
 
     // ---- Shared: extract text from an element, drilling down for specificity ----
     _smartExtract(el, x, y, lenient = false) {
+      // Instagram: extract caption or comment text precisely (avoid reaction counts / usernames)
+      if (window.location.hostname.includes('instagram.com')) {
+        // Comments: inside a list item
+        const li = el.closest?.('li');
+        if (li) {
+          const spans = li.querySelectorAll('span[dir="auto"]');
+          for (const span of spans) {
+            if (span.closest('a')) continue; // Username link
+            const t = _getVisibleText(span);
+            if (!t || t.length < 8 || !/[a-zA-Z]{2,}/.test(t)) continue;
+            if (_isNonContentText(t)) continue;
+            if (!t.includes(' ') && t.length < 25) continue;
+            const cleaned = _cleanExtractedText(t);
+            if (cleaned && cleaned.length >= 8) {
+              return { targetEl: span, cleaned: cleaned.substring(0, 1500) };
+            }
+          }
+        }
+        // Feed posts: inside an article — extract ONLY the caption span
+        const article = el.closest?.('article');
+        if (article) {
+          const spans = article.querySelectorAll('span[dir="auto"]');
+          for (const span of spans) {
+            if (span.closest('ul')) continue;  // Comment list
+            if (span.closest('a')) continue;   // Username link
+            const rect = span.getBoundingClientRect();
+            // Only consider spans near the cursor vertically
+            if (y < rect.top - 40 || y > rect.bottom + 40) continue;
+            const t = _getVisibleText(span);
+            if (!t || t.length < 15 || !/[a-zA-Z]{2,}/.test(t)) continue;
+            if (!t.includes(' ') && t.length < 30) continue; // Single word = username
+            if (_isNonContentText(t)) continue;
+            const cleaned = _cleanInstagramCaption(_cleanExtractedText(t));
+            if (cleaned && cleaned.length >= 15) {
+              return { targetEl: span, cleaned: cleaned.substring(0, 1500) };
+            }
+          }
+          return null; // Inside article but no caption found — don't fall through to generic
+        }
+      }
+
+      // LinkedIn: walk up from hover target to find the post text container.
+      // LinkedIn changes class names frequently, so use robust detection:
+      // post text is always inside span[dir="ltr"] with substantial multi-word content.
+      if (window.location.hostname.includes('linkedin.com')) {
+        let node = el;
+        for (let d = 0; node && node !== document.body && d < 12; d++) {
+          // Check if this node (or a dir="ltr" span inside it) has substantial post text
+          const candidate = (node.getAttribute?.('dir') === 'ltr' && node.tagName?.toLowerCase() === 'span')
+            ? node
+            : node.querySelector?.('span[dir="ltr"]');
+          if (candidate) {
+            const t = _getVisibleText(candidate);
+            // Must have real multi-word content (not just a name or button label)
+            if (t && t.length >= 30 && t.includes(' ') && /[a-zA-Z]{2,}/.test(t) && !_looksLikeCode(t)) {
+              const cleaned = _cleanExtractedText(t);
+              if (cleaned && cleaned.length >= 20) {
+                return { targetEl: candidate, cleaned: cleaned.substring(0, 1500) };
+              }
+            }
+          }
+          node = node.parentElement;
+        }
+      }
+
       // Reddit: if inside a shreddit-comment, extract that specific comment's content
       // Return full text (up to 1500 chars) — visual truncation handled by "see more" UI
       const rc = el.closest?.('shreddit-comment');
@@ -2725,9 +3065,9 @@
                    rc.querySelector(':scope > [slot="comment"]') ||
                    rc.querySelector(':scope > .md');
         if (ce) {
-          const t = this._getVisibleText(ce);
-          if (t && t.length >= 5 && /[a-zA-Z]{2,}/.test(t) && !this._looksLikeCode(t)) {
-            let cleaned = this._cleanExtractedText(t);
+          const t = _getVisibleText(ce);
+          if (t && t.length >= 5 && /[a-zA-Z]{2,}/.test(t) && !_looksLikeCode(t)) {
+            let cleaned = _cleanExtractedText(t);
             if (cleaned && cleaned.length >= 5) {
               return { targetEl: ce, cleaned: cleaned.substring(0, 1500) };
             }
@@ -2747,9 +3087,9 @@
         if (bodyEl) {
           const bodyRect = bodyEl.getBoundingClientRect();
           if (y >= bodyRect.top - 10 && y <= bodyRect.bottom + 10) {
-            const t = this._getVisibleText(bodyEl);
-            if (t && t.length >= 5 && /[a-zA-Z]{2,}/.test(t) && !this._looksLikeCode(t)) {
-              let cleaned = this._cleanExtractedText(t);
+            const t = _getVisibleText(bodyEl);
+            if (t && t.length >= 5 && /[a-zA-Z]{2,}/.test(t) && !_looksLikeCode(t)) {
+              let cleaned = _cleanExtractedText(t);
               if (cleaned && cleaned.length >= 5) {
                 return { targetEl: bodyEl, cleaned: cleaned.substring(0, 1500) };
               }
@@ -2761,8 +3101,17 @@
           const titleEl = rp.querySelector('[slot="title"]') ||
                           rp.querySelector('[data-testid="post-title"]') ||
                           rp.querySelector('a[id*="title"]');
-          return { targetEl: titleEl || rp, cleaned: this._cleanExtractedText(postTitle) };
+          return { targetEl: titleEl || rp, cleaned: _cleanExtractedText(postTitle) };
         }
+      }
+
+      // Reject oversized containers: if the element extends well beyond the viewport,
+      // it's a page/feed container (not specific content). Only translate text from
+      // elements that are roughly viewport-sized or smaller.
+      {
+        const elRect = el.getBoundingClientRect();
+        const vh = window.innerHeight;
+        if (elRect.height > vh * 2) return null; // Element is > 2× viewport — too large
       }
 
       // For links and headings, use the element's own text even if short (≥2 chars).
@@ -2775,10 +3124,10 @@
           const navParent = el.closest('nav, header, footer');
           if (navParent && !navParent.closest('article, main, [role="main"], shreddit-post, shreddit-comment')) return null;
         }
-        const linkText = this._getVisibleText(el);
-        if (linkText && linkText.length >= 2 && /[a-zA-Z]{2,}/.test(linkText) && !this._looksLikeCode(linkText)) {
-          const cleaned = this._cleanExtractedText(linkText);
-          if (cleaned && cleaned.length >= 2 && cleaned.length <= 300 && !this._hasConcatenatedActions(cleaned)) {
+        const linkText = _getVisibleText(el);
+        if (linkText && linkText.length >= 2 && /[a-zA-Z]{2,}/.test(linkText) && !_looksLikeCode(linkText)) {
+          const cleaned = _cleanExtractedText(linkText);
+          if (cleaned && cleaned.length >= 2 && cleaned.length <= 300 && !_hasConcatenatedActions(cleaned)) {
             return { targetEl: el, cleaned };
           }
         }
@@ -2787,13 +3136,13 @@
       // Check title attribute (YouTube #video-title uses title attr for clean text)
       const titleAttr = el.getAttribute?.('title');
       if (titleAttr && titleAttr.length >= 5 && titleAttr.length <= 300 && /[a-zA-Z]{2,}/.test(titleAttr)) {
-        return { targetEl: el, cleaned: this._cleanExtractedText(titleAttr) };
+        return { targetEl: el, cleaned: _cleanExtractedText(titleAttr) };
       }
 
-      const rawText = this._getVisibleText(el);
+      const rawText = _getVisibleText(el);
       if (!rawText || rawText.length < 5 || !/[a-zA-Z]{2,}/.test(rawText)) return null;
       // Reject code/metadata (script content from web components)
-      if (this._looksLikeCode(rawText)) return null;
+      if (_looksLikeCode(rawText)) return null;
       if (!lenient) {
         if (this.extractor._isExcluded(el) || this.extractor._isMostlyUsernames(rawText)) return null;
       } else {
@@ -2807,22 +3156,22 @@
       let targetEl = el;
       let cleaned;
 
-      if (rawText.length <= 1500 && !this._hasConcatenatedActions(rawText)) {
+      if (rawText.length <= 1500 && !_hasConcatenatedActions(rawText)) {
         // Moderate text without concatenated UI — use as-is after cleaning
-        cleaned = this._cleanExtractedText(rawText);
+        cleaned = _cleanExtractedText(rawText);
       } else {
         // Very long text or concatenated action text — drill down to find specific child
         const child = this._findBestChildNearPoint(el, x, y);
         if (child) {
           targetEl = child.el;
-          cleaned = this._cleanExtractedText(child.text);
+          cleaned = _cleanExtractedText(child.text);
         } else {
           // No specific child — extract nearby sentences
           cleaned = this._extractNearbySentences(el, x, y);
         }
       }
 
-      if (!cleaned || cleaned.length < 5 || this._looksLikeCode(cleaned)) return null;
+      if (!cleaned || cleaned.length < 5 || _looksLikeCode(cleaned)) return null;
       cleaned = cleaned.substring(0, 1500);
       return { targetEl, cleaned };
     }
@@ -2887,22 +3236,25 @@
       let el = e.target;
       let depth = 0;
       while (el && el !== document.body && depth < 10) {
+        // Close button click — actively dismiss lock (capture fires before btn handler)
+        if (el.id === 'ss-close-btn') {
+          this._onCloseOverlay();
+          return;
+        }
         // Skip our own overlay elements
         if (el.id === 'ss-overlay' || el.id === 'ss-translation' || el.id === 'ss-original' ||
             el.id === 'ss-tts-btn' || el.id === 'ss-tts-row' ||
-            el.id === 'ss-see-more-btn' || el.id === 'ss-close-btn' ||
+            el.id === 'ss-see-more-btn' ||
             el.id === 'ss-collapse-btn') return;
 
         const result = this._smartExtract(el, e.clientX, e.clientY);
         if (result) {
-          // Check if the clicked element is interactive (button, link, tab, etc.)
-          // If so, translate the text but don't lock or show the close button
+          // Never show subtitles when clicking buttons, tabs, or navigational components
           const interactive = this._isInteractiveEl(e.target, result.targetEl);
+          if (interactive) return;
+
           // Only lock and show (x) for long static text (paragraphs, descriptions).
-          // Short text or interactive elements just translate without locking.
-          const isLongStatic = !interactive && result.cleaned.length >= 40;
-          if (isLongStatic) {
-            // Long static text — lock and show close button
+          if (result.cleaned.length >= 40) {
             this._clickLocked = true;
             this._highlightElement(result.targetEl);
             this.overlay.showCloseBtn(result.targetEl);
@@ -2959,7 +3311,8 @@
       // overwrite the hover result (the debounced callback sets it more permanently)
       this._hoverLocked = true;
 
-      // Debounce rapid mouseover events
+      // Debounce rapid mouseover events — short delay to batch rapid
+      // mouse movements while still feeling responsive
       clearTimeout(this._hoverTimer);
       this._hoverTimer = setTimeout(() => {
         if (this._clickLocked) return; // Re-check after debounce
@@ -3008,7 +3361,7 @@
           el = el.parentElement;
           depth++;
         }
-      }, 120);
+      }, 50);
     }
 
     // ---- Instagram: scroll listener for comment container ----
@@ -3062,8 +3415,23 @@
     async _showBest() {
       if (this._clickLocked || this._hoverLocked) return; // Don't override user interaction
       if (this.overlay?._collapsed) return; // Subtitles disabled while collapsed
+
+      // If the source element for the current subtitle has scrolled offscreen,
+      // hide the stale subtitle and reset so a new one will be found
+      if (this._lastSourceEl && this.lastText) {
+        const r = this._lastSourceEl.getBoundingClientRect();
+        if (r.bottom < -50 || r.top > window.innerHeight + 50) {
+          this.overlay?.hide();
+          this._clearHighlight();
+          this.lastText = '';
+        }
+      }
+
       const result = this.extractor.extractSingle();
       if (!result || result.text === this.lastText) return;
+      // Universal safety net: reject concatenated UI text from any extractor
+      if (_hasConcatenatedActions(result.text) ||
+          _isNonContentText(result.text)) return;
       this.lastText = result.text;
 
       this._highlightElement(result.element);
@@ -3085,6 +3453,7 @@
     // Shadow DOM boundaries and overrides any page CSS specificity.
     _highlightElement(el) {
       this._clearHighlight();
+      this._lastSourceEl = el || null; // Track source for offscreen detection
       if (this.settings.highlightMode && el) {
         // Store originals so we can restore them
         this._prevOutline = el.style.outline;
@@ -3129,7 +3498,7 @@
         // Turned off
         if (!this.settings.enabled) {
           this.overlay?._stopSpeech();
-          this.overlay?.hide();
+          this.overlay?.hide(true);
           this.overlay?.hideCloseBtn();
           this._clickLocked = false;
           this._clearHighlight();
@@ -3147,19 +3516,26 @@
         // Stayed on — react to specific changes
         if (!this.settings.highlightMode) this._clearHighlight();
 
-        // Language changed → clear translation cache and re-translate
+        // Language changed → clear translation cache and re-translate current text
         if (oldLang !== this.settings.targetLang) {
           this.translator.cache.clear();
           this.translator.pending.clear();
-          this.lastText = '';
+          ++this._translateGen; // Cancel any in-flight old-language translations
+
           if (this._isYTWatch()) {
-            // Destroy old handler but keep nav watchers alive
             this.ytHandler?.destroy();
             this.ytHandler = new YouTubeHandler(this.overlay, this.translator, this.settings);
             this.ytHandler.init();
             this.ytHandler.handleFullscreen();
           } else {
-            this._showBest();
+            // Re-translate whatever text is currently shown (don't hide the overlay)
+            const currentSource = (this._clickLocked && this._lastSourceEl)
+              ? this._lastSourceEl.textContent?.trim()
+              : this.lastText;
+            if (currentSource) {
+              this.lastText = currentSource;
+              this._translateText(currentSource);
+            }
           }
           return;
         }

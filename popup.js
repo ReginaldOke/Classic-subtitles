@@ -93,4 +93,8 @@ function onSettingChange() {
   // Write directly to storage — background detects change via onChanged
   // and broadcasts to all tabs + updates icon
   chrome.storage.sync.set({ ssSettings: settings });
+
+  // Also send a direct message to ensure icon updates even if
+  // the service worker missed the onChanged event during wake-up
+  chrome.runtime.sendMessage({ type: 'updateIcon', enabled: settings.enabled }).catch(() => {});
 }

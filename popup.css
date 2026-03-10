@@ -59,6 +59,16 @@ h1 {
   letter-spacing: -0.2px;
 }
 
+/* ---- Description ---- */
+.description {
+  font-size: 12.5px;
+  font-style: italic;
+  font-weight: 400;
+  color: rgba(241, 216, 113, 0.85);
+  line-height: 1.4;
+  margin-bottom: 14px;
+}
+
 /* ---- Divider ---- */
 .divider {
   height: 1px;

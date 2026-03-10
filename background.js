@@ -8,6 +8,7 @@ const CACHE_MAX_SIZE = 2000;
 const STORAGE_CACHE_MAX = 1500; // Persistent cache eviction threshold
 const VALID_LANGS = new Set([
   'en','es','fr','de','it','pt','ja','ko','zh','ar','hi','ru',
+  'nl','el','pl','th','tr',
 ]);
 const BATCH_CONCURRENCY = 5;
 
@@ -32,7 +33,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       handleTranslation(message.text, message.target || 'es')
         .then(translation => sendResponse({ translation }))
         .catch(err => {
-          console.warn('[CS Background] Translation error:', err.message);
           sendResponse({ translation: null, error: err.message });
         });
       return true; // Keep channel open for async response
@@ -87,18 +87,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             if (pick) opts.voiceName = pick.voiceName;
           }
           chrome.tts.speak(message.text, opts, () => {
-            if (chrome.runtime.lastError) {
-              console.warn('[CS Background] TTS error:', chrome.runtime.lastError.message);
-            }
+            void chrome.runtime.lastError;
           });
         });
       } catch (err) {
-        console.warn('[CS Background] TTS error:', err);
+        void err;
       }
       return false;
 
     case 'tts-stop':
       try { chrome.tts.stop(); } catch {}
+      return false;
+
+    case 'updateIcon':
+      updateIcon(message.enabled);
       return false;
   }
 });
@@ -222,7 +224,7 @@ async function getStoredTranslation(key) {
 function storeTranslation(key, value) {
   chrome.storage.local.set({ [key]: value }, () => {
     if (chrome.runtime.lastError) {
-      console.warn('[CS Background] Storage write failed:', chrome.runtime.lastError.message);
+      void chrome.runtime.lastError;
     }
   });
   // Periodically check and evict old entries
@@ -250,7 +252,7 @@ async function evictStorageCacheIfNeeded() {
     const cacheKeys = Object.keys(all).filter(k => k.startsWith('t|'));
     if (cacheKeys.length > STORAGE_CACHE_MAX) {
       const toRemove = cacheKeys.slice(0, cacheKeys.length - STORAGE_CACHE_MAX);
-      chrome.storage.local.remove(toRemove);
+      chrome.storage.local.remove(toRemove, () => void chrome.runtime.lastError);
     }
   } catch {}
   _evictPending = false;
@@ -263,7 +265,8 @@ chrome.storage.sync.get('ssSettings', (data) => {
   updateIcon(settings.enabled);
 });
 
-chrome.storage.onChanged.addListener((changes) => {
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== 'sync') return; // Only react to sync storage changes
   if (changes.ssSettings) {
     const newSettings = changes.ssSettings.newValue;
     if (newSettings) {
@@ -282,13 +285,13 @@ chrome.storage.onChanged.addListener((changes) => {
   }
 });
 
-async function updateIcon(enabled) {
+async function updateIcon(enabled, _retries = 0) {
   try {
     const cacheKey = enabled ? 'enabled' : 'disabled';
 
     // Return cached icon if available
     if (iconCache[cacheKey]) {
-      chrome.action.setIcon({ imageData: iconCache[cacheKey] });
+      chrome.action.setIcon({ imageData: iconCache[cacheKey] }, () => void chrome.runtime.lastError);
       return;
     }
 
@@ -342,9 +345,12 @@ async function updateIcon(enabled) {
     // Cache the rendered icon
     iconCache[cacheKey] = imageDataMap;
 
-    chrome.action.setIcon({ imageData: imageDataMap });
+    chrome.action.setIcon({ imageData: imageDataMap }, () => void chrome.runtime.lastError);
   } catch (err) {
-    console.warn('[CS Background] Icon update failed:', err.message);
+    // Retry once — service worker may have been waking up during first attempt
+    if (_retries < 1) {
+      setTimeout(() => updateIcon(enabled, _retries + 1), 200);
+    }
   }
 }
 
@@ -353,7 +359,7 @@ chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.sync.get('ssSettings', (data) => {
     if (chrome.runtime.lastError) return;
     if (!data.ssSettings) {
-      chrome.storage.sync.set({ ssSettings: DEFAULT_SETTINGS });
+      chrome.storage.sync.set({ ssSettings: DEFAULT_SETTINGS }, () => void chrome.runtime.lastError);
     }
   });
   updateIcon(true);
