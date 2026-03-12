@@ -620,8 +620,9 @@
     }
 
     // Get just the translation text (excludes "see more" button text)
+    // Always read from the DOM so it matches what the user sees.
     _getTranslationText() {
-      return (this._fullText || '').trim();
+      return (this._textNode?.textContent || '').trim();
     }
 
     // ---- Expand / collapse long text ----
@@ -857,6 +858,30 @@
       }
 
       // Notify ClassicSubtitles so it can pause/resume extraction
+      if (typeof this._onCollapseChange === 'function') {
+        this._onCollapseChange(this._collapsed);
+      }
+
+      // Sync collapse state to other tabs
+      try {
+        chrome.runtime.sendMessage({ type: 'collapseChanged', collapsed: this._collapsed });
+      } catch {}
+    }
+
+    // Apply collapse state from another tab (no animation)
+    _setCollapsed(collapsed) {
+      if (this._collapsed === collapsed) return;
+      this._collapsed = collapsed;
+      if (collapsed) {
+        this._stopSpeech();
+        this.container.classList.remove('ss-collapsing', 'ss-uncollapsing');
+        this.container.classList.add('ss-collapsed');
+        this._syncCollapseBg();
+      } else {
+        this.container.classList.remove('ss-collapsed', 'ss-collapsing', 'ss-uncollapsing');
+        if (this.collapseBtn) { this.collapseBtn.style.background = ''; this.collapseBtn.style.filter = ''; }
+        if (!this.showBackground) this._syncBtnFill();
+      }
       if (typeof this._onCollapseChange === 'function') {
         this._onCollapseChange(this._collapsed);
       }
@@ -3489,6 +3514,10 @@
 
     _listenSettings() {
       chrome.runtime.onMessage.addListener((msg) => {
+        if (msg.type === 'collapseSync') {
+          this.overlay?._setCollapsed(msg.collapsed);
+          return;
+        }
         if (msg.type !== 'settingsUpdated') return;
         const wasOn = this.settings.enabled;
         const oldLang = this.settings.targetLang;

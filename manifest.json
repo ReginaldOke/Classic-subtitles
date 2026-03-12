@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Classic Subtitles",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Learn languages passively — classic yellow movie-style subtitles on every page and video",
   "permissions": ["storage", "tts"],
   "host_permissions": [

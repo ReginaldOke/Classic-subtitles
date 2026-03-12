@@ -64,6 +64,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         .catch(err => sendResponse({ translations: [], error: err.message }));
       return true;
 
+    case 'collapseChanged':
+      // Broadcast collapse state to all other tabs
+      chrome.tabs.query({}, (tabs) => {
+        if (chrome.runtime.lastError) return;
+        for (const tab of tabs) {
+          if (tab.id === sender.tab?.id) continue; // skip the sender
+          chrome.tabs.sendMessage(tab.id, {
+            type: 'collapseSync',
+            collapsed: message.collapsed
+          }).catch(() => {});
+        }
+      });
+      return false;
+
     case 'tts-speak':
       try {
         chrome.tts.stop();
